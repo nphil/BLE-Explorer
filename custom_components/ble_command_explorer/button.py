@@ -1,0 +1,174 @@
+"""Fixed, reviewed BLE GATT command buttons.
+
+This platform intentionally does not discover commands or write on setup.
+Only non-synthetic commands marked ``stage: tested`` are represented, and a
+user must explicitly enable the integration's ``allow_writes`` setting before
+pressing a button can perform a write.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+
+from bleak.exc import BleakError
+from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
+from homeassistant.components import bluetooth
+from homeassistant.components.button import ButtonEntity
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+
+from .const import CONF_ADDRESS, CONF_ALLOW_WRITES, DOMAIN, WRITE_TIMEOUT
+
+_LOGGER = logging.getLogger(__name__)
+
+
+async def async_setup_entry(
+    hass: HomeAssistant, entry: ConfigEntry, async_add_entities
+) -> None:
+    """Add buttons for tested, non-synthetic profile commands only."""
+
+    runtime = hass.data[DOMAIN][entry.entry_id]
+    # One lock is shared by every command for this physical device.
+    runtime["write_lock"] = asyncio.Lock()
+    entities = [
+        BleCommandButton(
+            hass=hass,
+            entry=entry,
+            address=runtime["address"],
+            allow_writes=runtime["allow_writes"],
+            write_lock=runtime["write_lock"],
+            command=command,
+            device_name=runtime["profile"]["device"]["name"],
+        )
+        for command in runtime["profile"]["commands"]
+        if not runtime["profile"]["synthetic"] and not command["synthetic"] and command["stage"] == "tested"
+    ]
+    async_add_entities(entities)
+
+
+class BleCommandButton(ButtonEntity):
+    """A single fixed GATT write from a validated evidence record."""
+
+    _attr_entity_registry_enabled_default = False
+    _attr_should_poll = False
+    _attr_icon = "mdi:bluetooth"
+
+    def __init__(
+        self,
+        *,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        address: str,
+        allow_writes: bool,
+        write_lock: asyncio.Lock,
+        command: dict[str, object],
+        device_name: str,
+    ) -> None:
+        self._entry = entry
+        self._hass = hass
+        self._address = address
+        self._allow_writes = allow_writes
+        self._write_lock = write_lock
+        self._command = command
+        self._attr_extra_state_attributes = {
+            "transport": "Home Assistant shared Bluetooth stack (local adapter or active proxy)",
+        }
+        self._attr_name = str(command["name"])
+        self._attr_unique_id = f"{address.lower()}_{command['id']}"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, address.lower())},
+            "name": device_name,
+        }
+
+    @property
+    def available(self) -> bool:
+        """Remain retryable while exposing transport failures in attributes."""
+
+        # Bluetooth resolution is intentionally done only on press. Keeping
+        # this true avoids stranding the entity after a transient proxy slot
+        # contention; the reason is surfaced in extra state attributes.
+        return True
+
+    async def async_press(self) -> None:
+        """Write exactly one reviewed payload, with one timeout and no retries."""
+
+        if not self._allow_writes:
+            raise HomeAssistantError(
+                "BLE writes are disabled; reconfigure with allow_writes enabled"
+            )
+        payload = bytes.fromhex(str(self._command["value"]))
+        async with self._write_lock:
+            try:
+                async with asyncio.timeout(WRITE_TIMEOUT):
+                    # HA's shared Bluetooth stack supports both local adapters
+                    # and ESPHome proxies. connectable=True is intentional:
+                    # passive/non-active proxies cannot execute GATT writes.
+                    # Despite its historical async_ name, this HA helper is a
+                    # synchronous callback returning BLEDevice | None.
+                    device = bluetooth.async_ble_device_from_address(
+                        self._hass, self._address, connectable=True
+                    )
+                    if device is None:
+                        self._attr_extra_state_attributes["availability_reason"] = (
+                            "No connectable device. Passive/non-active proxies cannot "
+                            "perform GATT writes; an active proxy may be occupied."
+                        )
+                        self.async_write_ha_state()
+                        raise HomeAssistantError(
+                            "No connectable BLE device is available for this address. "
+                            "A passive/non-active proxy cannot perform a GATT write; "
+                            "a proxy may also be busy with another connection."
+                        )
+                    # HA's connector handles the shared-stack connection
+                    # (including active ESPHome proxies); this does not retry
+                    # or replay the command write itself.
+                    client = await establish_connection(
+                        BleakClientWithServiceCache,
+                        device,
+                        self._attr_name,
+                    )
+                    try:
+                        service = client.services.get_service(str(self._command["service"]))
+                        if service is None:
+                            raise HomeAssistantError(
+                                "Profile service UUID was not exposed by the connected device"
+                            )
+                        characteristic = service.get_characteristic(
+                            str(self._command["characteristic"])
+                        )
+                        if characteristic is None:
+                            raise HomeAssistantError(
+                                "Profile characteristic is not part of the mapped service"
+                            )
+                        required_property = (
+                            "write" if bool(self._command["response"]) else "write-without-response"
+                        )
+                        properties = {
+                            str(prop).lower() for prop in characteristic.properties
+                        }
+                        if required_property not in properties:
+                            raise HomeAssistantError(
+                                f"Characteristic does not support {required_property}"
+                            )
+                        if not self._command["response"] and len(payload) > characteristic.max_write_without_response_size:
+                            raise HomeAssistantError("Payload exceeds the connection's write-without-response limit; automatic splitting is disabled")
+                        await client.write_gatt_char(
+                            characteristic,
+                            payload,
+                            response=bool(self._command["response"]),
+                        )
+                    finally:
+                        await client.disconnect()
+                self._attr_extra_state_attributes.pop("availability_reason", None)
+                self.async_write_ha_state()
+            except asyncio.TimeoutError as err:
+                self._attr_extra_state_attributes["availability_reason"] = (
+                    "Connection/write timed out; an active proxy may be occupied or "
+                    "the device may not be connectable."
+                )
+                self.async_write_ha_state()
+                raise HomeAssistantError("BLE command timed out") from err
+            except BleakError as err:
+                raise HomeAssistantError(f"BLE connection/write failed: {err}") from err

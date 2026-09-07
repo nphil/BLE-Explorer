@@ -1,0 +1,16 @@
+name: BLE Studio Workbench
+version: "0.1.0"
+slug: ble_command_explorer
+description: Static BLE command profile viewer; Bluetooth is provided by the Home Assistant integration.
+url: https://github.com/nphil/BLE-Explorer
+startup: services
+boot: auto
+ingress: true
+ingress_port: 8080
+init: false
+panel_icon: mdi:bluetooth
+panel_title: BLE Studio Workbench
+image: ghcr.io/nphil/ble-explorer
+arch:
+  - amd64
+  - aarch64

@@ -1,0 +1,10 @@
+__pycache__/
+.pytest_cache/
+*.py[cod]
+ble_command_explorer.zip
+node_modules/
+.env*
+*.tar.gz
+test-results/
+playwright-report/
+

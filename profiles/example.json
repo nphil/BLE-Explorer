@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "device": {
+    "name": "Captured BLE device (example)",
+    "address": "AA:BB:CC:DD:EE:FF"
+  },
+  "synthetic": false,
+  "commands": [
+    {
+      "id": "example_tested_command",
+      "name": "Example tested command",
+      "service": "12345678-1234-5678-1234-56789abcdef0",
+      "characteristic": "12345678-1234-5678-1234-56789abcdef1",
+      "value": "0100",
+      "response": true,
+      "stage": "tested",
+      "notes": "Replace this example only with evidence from your own capture and device.",
+      "synthetic": false
+    }
+  ]
+}
+
