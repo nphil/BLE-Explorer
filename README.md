@@ -4,7 +4,7 @@
 
 An experimental, local-first Bluetooth LE workbench and Home Assistant custom integration. Capture evidence, inspect GATT traffic, map reviewed commands, and create explicit button controls through Home Assistant’s shared Bluetooth stack.
 
-**Status: developer preview 0.1.0.** Parser, profile and selected browser interactions have been tested. No physical device, ESPHome proxy, Home Assistant clean installation, HACS installation, or container release has been validated in this environment. No universal-device compatibility is claimed.
+**Status: developer preview 0.2.0.** Parser, profile and selected browser interactions have been tested. No physical device, ESPHome proxy, Home Assistant clean installation, HACS installation, or container release has been validated in this environment. No universal-device compatibility is claimed.
 
 ## Three parts, one project
 
@@ -122,7 +122,7 @@ docker run --rm -p 127.0.0.1:8080:8080 ble-studio:dev
 
 Open `http://localhost:8080`. The image serves `dist/` with unprivileged nginx. It contains no Home Assistant runtime or BLE driver. Do not expose it to a network without authentication/TLS: unlike the private hosted Site, the standalone container has **no built-in login**. HTTPS/secure-context requirements apply to browser hardware APIs.
 
-After a successful tagged workflow, use `ghcr.io/nphil/ble-studio:0.1.0` (amd64/arm64). OCI labels carry the project title and repository. GHCR does not have a portable per-image icon field; README branding and OCI metadata are supplied instead.
+After a successful tagged workflow, use `ghcr.io/nphil/ble-studio:0.2.0` (amd64/arm64). OCI labels carry the project title and repository. GHCR does not have a portable per-image icon field; README branding and OCI metadata are supplied instead.
 
 ## Development and release
 
