@@ -10,7 +10,7 @@ An experimental, local-first Bluetooth LE workbench and Home Assistant custom in
 
 | Component | Purpose | Radio access |
 | --- | --- | --- |
-| BLE Studio Workbench | Guided capture import, analysis, byte comparison, evidence review and export | Optional Web Bluetooth on the computer/tablet viewing the page |
+| BLE Studio | Guided capture import, analysis, byte comparison, evidence review and export | Optional Web Bluetooth on the computer/tablet viewing the page |
 | BLE Studio Integration | Reviewed fixed-payload buttons inside Home Assistant | HA Bluetooth API → active ESPHome proxy or local adapter |
 | Optional Workbench add-on / Docker image | Hosts the same browser UI locally | No host adapter, DBus, privileged device or proxy access of its own |
 
@@ -79,23 +79,23 @@ Web Bluetooth requires a supported browser and secure context (normally HTTPS). 
 ## Install the custom integration
 
 [![Add repository to HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=nphil&repository=BLE-Explorer&category=integration)
-[![Add integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=ble_command_explorer)
+[![Add integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=ble_studio)
 
 ### HACS (after repository publication)
 
 1. Install/configure HACS first. Open HACS → custom repositories.
-2. Add `https://github.com/nphil/BLE-Explorer` as **Integration**.
+2. Add `https://github.com/nphil/BLE-Studio` as **Integration**.
 3. Download BLE Studio Integration and restart Home Assistant.
 4. In the workbench, save the device’s Bluetooth address. Only after physically testing a safe command, record evidence and set its write mode.
 5. Select Integration → **Download HA install profile**. This is the eligible-only runtime file, not the richer evidence/backup JSON.
 6. In HA, Settings → Devices & services → Add integration → BLE Studio Integration. Enter the target address and paste the install profile. Leave writes disabled for initial review.
 7. Check the generated device and buttons. Explicitly reconfigure to allow writes and enable only the button entities you intend to use.
 
-Home Assistant 2026.3+ is the declared minimum for local brand assets. The technical domain remains `ble_command_explorer` for profile/entry stability. HACS installs the custom component folder from the selected source release; the release ZIP is for manual installation, avoiding ambiguous HACS ZIP nesting.
+Home Assistant 2026.3+ is the declared minimum for local brand assets. The technical domain remains `ble_studio` for profile/entry stability. HACS installs the custom component folder from the selected source release; the release ZIP is for manual installation, avoiding ambiguous HACS ZIP nesting.
 
 ### Manual/private installation
 
-Copy `custom_components/ble_command_explorer/` into `/config/custom_components/ble_command_explorer/` without overwriting unrelated integrations, or extract the release ZIP into `/config/` (it contains the `custom_components/ble_command_explorer` prefix). Restart HA and use Add integration. Back up the existing folder before upgrading.
+Copy `custom_components/ble_studio/` into `/config/custom_components/ble_studio/` without overwriting unrelated integrations, or extract the release ZIP into `/config/` (it contains the `custom_components/ble_studio` prefix). Restart HA and use Add integration. Back up the existing folder before upgrading.
 
 To revise a profile or change write opt-in, use the integration entry’s **Reconfigure** action. A different Bluetooth address requires a new entry, preventing identity collisions. Rotating addresses and devices requiring pairing/session authentication need additional device-specific work.
 
@@ -107,9 +107,9 @@ If a write fails: close the vendor app if the device allows one client, check pr
 
 ## Optional Workbench add-on
 
-[![Add add-on repository](https://my.home-assistant.io/badges/supervisor_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fnphil%2Fble-studio)
+[![Add add-on repository](https://my.home-assistant.io/badges/supervisor_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fnphil%2FBLE-Studio)
 
-After a matching image release exists, add the repository to Home Assistant’s app/add-on store, install BLE Studio Workbench and open its ingress panel. The ingress panel is the authenticated native-sidebar route, so an iframe panel is not needed. This requires a Supervisor-managed installation supporting add-ons; HA Container does not provide the add-on store.
+After a matching image release exists, add the repository to Home Assistant’s app/add-on store, install BLE Studio and open its ingress panel. The ingress panel is the authenticated native-sidebar route, so an iframe panel is not needed. This requires a Supervisor-managed installation supporting add-ons; HA Container does not provide the add-on store.
 
 The add-on requests no Bluetooth/DBus/device privileges. It serves the UI; the separately installed integration uses HA Bluetooth. Browser-local session data belongs to the ingress origin/profile and is not synchronized to the hosted Site or another browser. The published GHCR package must be public for the Supervisor to pull it without registry credentials.
 
@@ -122,7 +122,7 @@ docker run --rm -p 127.0.0.1:8080:8080 ble-studio:dev
 
 Open `http://localhost:8080`. The image serves `dist/` with unprivileged nginx. It contains no Home Assistant runtime or BLE driver. Do not expose it to a network without authentication/TLS: unlike the private hosted Site, the standalone container has **no built-in login**. HTTPS/secure-context requirements apply to browser hardware APIs.
 
-After a successful tagged workflow, use `ghcr.io/nphil/ble-explorer:0.1.0` (amd64/arm64). OCI labels carry the project title and repository. GHCR does not have a portable per-image icon field; README branding and OCI metadata are supplied instead.
+After a successful tagged workflow, use `ghcr.io/nphil/ble-studio:0.1.0` (amd64/arm64). OCI labels carry the project title and repository. GHCR does not have a portable per-image icon field; README branding and OCI metadata are supplied instead.
 
 ## Development and release
 

@@ -1,4 +1,4 @@
-"""Package the tracked, non-secret project for a private workbench download."""
+"""Package the tracked, non-secret project for a private source download."""
 from pathlib import Path
 import subprocess
 from zipfile import ZipFile, ZIP_DEFLATED

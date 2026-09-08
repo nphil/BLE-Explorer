@@ -1,10 +1,11 @@
 __pycache__/
 .pytest_cache/
 *.py[cod]
-ble_command_explorer.zip
+ble_studio.zip
 node_modules/
 .env*
 *.tar.gz
 test-results/
 playwright-report/
 
+dist/ble-studio-source.zip

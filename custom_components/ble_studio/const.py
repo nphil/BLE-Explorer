@@ -1,6 +1,6 @@
 """Constants for the BLE Studio Home Assistant integration."""
 
-DOMAIN = "ble_command_explorer"
+DOMAIN = "ble_studio"
 CONF_ADDRESS = "address"
 CONF_PROFILE = "profile"
 CONF_ALLOW_WRITES = "allow_writes"

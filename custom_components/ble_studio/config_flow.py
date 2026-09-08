@@ -13,7 +13,7 @@ from .const import CONF_ADDRESS, CONF_ALLOW_WRITES, CONF_PROFILE, DEFAULT_ALLOW_
 from .profile import ProfileValidationError, parse_profile
 
 
-class BleCommandExplorerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class BleStudioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Collect a BLE address and strict profile JSON from the user."""
 
     VERSION = 1

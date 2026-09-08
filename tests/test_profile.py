@@ -4,7 +4,7 @@ import json
 import unittest
 from pathlib import Path
 
-from custom_components.ble_command_explorer.profile import (
+from custom_components.ble_studio.profile import (
     ProfileValidationError,
     parse_profile,
     validate_profile,

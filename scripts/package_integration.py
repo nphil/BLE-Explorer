@@ -8,7 +8,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 
 def package(root: Path, output: Path) -> None:
-    component = root / "custom_components" / "ble_command_explorer"
+    component = root / "custom_components" / "ble_studio"
     manifest = component / "manifest.json"
     if not manifest.is_file():
         raise SystemExit(f"missing component manifest: {manifest}")
@@ -18,12 +18,12 @@ def package(root: Path, output: Path) -> None:
             if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
                 archive.write(
                     path,
-                    Path("custom_components/ble_command_explorer")
+                    Path("custom_components/ble_studio")
                     / path.relative_to(component),
                 )
     with ZipFile(output) as archive:
         names = set(archive.namelist())
-    expected = "custom_components/ble_command_explorer/manifest.json"
+    expected = "custom_components/ble_studio/manifest.json"
     # Manual installation archive: extract into /config. HACS installs the
     # source component folder; zip_release is intentionally not enabled.
     if expected not in names:
@@ -33,6 +33,6 @@ def package(root: Path, output: Path) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=Path(__file__).parents[1])
-    parser.add_argument("--output", type=Path, default=Path("dist/ble_command_explorer.zip"))
+    parser.add_argument("--output", type=Path, default=Path("dist/ble_studio.zip"))
     args = parser.parse_args()
     package(args.root.resolve(), args.output)

@@ -6,7 +6,7 @@ import subprocess
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("profile_contract", ROOT / "custom_components/ble_command_explorer/profile.py")
+spec = importlib.util.spec_from_file_location("profile_contract", ROOT / "custom_components/ble_studio/profile.py")
 profile = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(profile)
 

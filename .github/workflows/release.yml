@@ -32,11 +32,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python scripts/package_integration.py --output ble_command_explorer.zip
+      - run: python scripts/package_integration.py --output ble_studio.zip
       - uses: actions/upload-artifact@v4
         with:
           name: ble-studio-integration
-          path: ble_command_explorer.zip
+          path: ble_studio.zip
 
   release:
     needs: package
@@ -51,9 +51,9 @@ jobs:
       - name: Create or update release
         run: |
           if gh release view "$GITHUB_REF_NAME" --repo "$GH_REPO" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" ble_command_explorer.zip --repo "$GH_REPO" --clobber
+            gh release upload "$GITHUB_REF_NAME" ble_studio.zip --repo "$GH_REPO" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" ble_command_explorer.zip --repo "$GH_REPO" --generate-notes
+            gh release create "$GITHUB_REF_NAME" ble_studio.zip --repo "$GH_REPO" --generate-notes
           fi
 
   image:
@@ -76,6 +76,6 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/nphil/ble-explorer:${{ github.ref_name }}
-            ghcr.io/nphil/ble-explorer:${{ steps.version.outputs.version }}
-            ghcr.io/nphil/ble-explorer:latest
+            ghcr.io/nphil/ble-studio:${{ github.ref_name }}
+            ghcr.io/nphil/ble-studio:${{ steps.version.outputs.version }}
+            ghcr.io/nphil/ble-studio:latest
