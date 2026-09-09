@@ -19,6 +19,15 @@ object NtfyBudget {
     data class Counter(val dayKey: String, val sentToday: Int)
 
     /** Whether one more message may go out now, and the counter to persist if it does. */
+    /**
+     * Milliseconds a caller must wait before [admit] will pass the spacing rule. Background log
+     * batches skip their turn when this is positive; a send the operator asked for waits it out
+     * instead, because failing a deliberate upload to protect a 10 s courtesy gap is the wrong
+     * trade (this is the bug that silently dropped a capture uploaded right after its markers).
+     */
+    fun msUntilSlot(nowMs: Long, lastSendMs: Long): Long =
+        (MIN_INTERVAL_MS - (nowMs - lastSendMs)).coerceIn(0L, MIN_INTERVAL_MS)
+
     fun admit(counter: Counter, todayKey: String, nowMs: Long, lastSendMs: Long): Pair<Boolean, Counter> {
         val sent = if (counter.dayKey == todayKey) counter.sentToday else 0
         if (sent >= DAILY_CAP) return false to Counter(todayKey, sent)

@@ -98,3 +98,23 @@ class NtfyPendingCapTest {
         assertEquals(0, NtfyBudget.capPending(q, capacity = 200) { "never" })
     }
 }
+
+class NtfySlotWaitTest {
+    @Test
+    fun `a send inside the spacing window is told how long to wait, not refused forever`() {
+        val last = 1_000_000L
+        assertEquals(10_000L, NtfyBudget.msUntilSlot(last, last))
+        assertEquals(6_000L, NtfyBudget.msUntilSlot(last + 4_000, last))
+        assertEquals(0L, NtfyBudget.msUntilSlot(last + 10_000, last))
+        assertEquals(0L, NtfyBudget.msUntilSlot(last + 60_000, last))
+        // Waiting exactly that long is enough for admit to pass.
+        val counter = NtfyBudget.Counter("2026-09-09", 3)
+        val wait = NtfyBudget.msUntilSlot(last + 4_000, last)
+        assertTrue(NtfyBudget.admit(counter, "2026-09-09", last + 4_000 + wait, last).first)
+    }
+
+    @Test
+    fun `a clock that jumped backwards never waits longer than the interval`() {
+        assertEquals(10_000L, NtfyBudget.msUntilSlot(0L, 5_000_000L))
+    }
+}

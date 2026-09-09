@@ -124,6 +124,12 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
      * Publishes one dump immediately as a single attachment (ntfy treats bodies over 4 KB as
      * attachments anyway; naming the file keeps it in one piece and one budget slot).
      */
+    /** Blocks until the spacing rule will admit a publish. Only operator-initiated sends wait. */
+    private suspend fun awaitSlot() {
+        val wait = NtfyBudget.msUntilSlot(System.currentTimeMillis(), lastSendMs)
+        if (wait > 0) delay(wait)
+    }
+
     suspend fun sendNow(title: String, body: String): String {
         val redacted = NtfyBudget.redact(body)
         // Short dumps read better as message text; ntfy turns anything past ~4 KB into an
@@ -133,6 +139,7 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
         } else {
             null
         }
+        awaitSlot()
         return publish(settings.first(), title, redacted, filename).detail
     }
 
@@ -157,6 +164,7 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
         val results = parts.mapIndexed { index, part ->
             val suffix = if (parts.size == 1) "" else ".part${index + 1}of${parts.size}"
             val name = "${file.name}.gz$suffix"
+            awaitSlot()
             val outcome = publishBytes(s, if (parts.size == 1) title else "$title (${index + 1}/${parts.size})", part, name)
             log("upload", "$name: ${outcome.detail}")
             outcome

@@ -296,8 +296,10 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
             val markers = _state.value.markers.joinToString("\n") { m ->
                 "${m.timestampEpochMicros} ${m.source} ${m.label}" + (m.control?.let { " [${it.viewId} ${it.screen}]" } ?: "")
             }
-            report(debug.sendNow("BlueShark markers ${_state.value.sessionName}", "session=${_state.value.sessionId}\n$markers"))
+            // File first: it is the artefact that matters, and each send now waits for its own
+            // publish slot rather than being refused for arriving too soon after the previous one.
             report(debug.sendFile("BlueShark capture ${_state.value.sessionName}", File(path)))
+            report(debug.sendNow("BlueShark markers ${_state.value.sessionName}", "session=${_state.value.sessionId}\n$markers"))
         }
     }
 
