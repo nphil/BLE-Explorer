@@ -16,12 +16,29 @@ the Home Assistant integration for a reverse-engineered device. Feed the agent t
 | `session.gatt` (`GattDatabase`) | Exact service/characteristic UUIDs, properties (`WRITE` vs `WRITE_NO_RESPONSE`, `NOTIFY` vs `INDICATE`), CCCD presence. Never invent a UUID not present here. |
 | `session.connection` (`ConnectionFacts`) | `negotiatedMtu` (frame size cap), `preferredWriteType`, `writeWithoutResponseVerified`, `idleDisconnectMs` (persistent vs connect-on-demand decision), `minInterCommandMs` (rate limit), `maxObservedResponseMs` (timeout floor), `pairingRequired`, `connectAttempts` (connect latency distribution and failure modes). |
 | `session.events` (`BleEvent[]`) | Raw packets with µs timestamps, direction, source (`HCI_SNOOP` = vendor app traffic, `LIVE_GATT` = our own, `MITM_RELAY`), handles, UUIDs, payload hex. Ground truth for everything below. |
-| `session.markers` | The user's labelled moments ("power on") to align with events. |
+| `session.markers` | The user's labelled moments ("power on") to align with events. `markers[].source` says who wrote the marker and `markers[].control` identifies the vendor-app control behind it - see below. |
 | `session.commands` (`CommandSpec[]`) | The command catalogue. **Only `stage == DEVICE_TESTED && !synthetic` may become an entity action.** `HYPOTHESIS`/`OBSERVED` entries are leads, not features. `response` gives the correlation predicate (characteristic + prefix/mask + observed latencies). `parameters` are byte-range hypotheses with observed values. |
 | `session.notifications` (`NotificationSpec[]`) | Inbound state frames with decoding hypotheses → sensors/binary sensors/state feedback. |
 | `session.ciphers` (`CipherScheme[]`) | Application-layer encryption the operator described: primitive, key derivation, nonce/AAD/tag byte sources, ciphertext range and which frames each scheme claims. `keyHex` is **empty unless the operator ticked "Include cipher keys"** at export — the shape travels, the secret does not. Reproduce a scheme with your own key; see `docs/decryption.md`. |
 | `session.protocol` (`ProtocolModel`) | Framing: header bytes, length/sequence/checksum offsets, endianness, handshake command ids, pairing/encryption notes. Treat as hypotheses until the events confirm them. |
 | `session.environment` (`CaptureEnvironment`) | Android version/fingerprint, vendor app package+version, HCI snoop mode. `hciSnoopMode != "full"` means payloads may be truncated: distrust long frames. |
+
+### `markers[]` (`CaptureMarker`)
+
+Both fields below are **additive** (schema version unchanged): a marker written by an older build
+parses as `source: "MANUAL"` with `control: null`.
+
+| Field | Meaning |
+| --- | --- |
+| `markers[].source` | `MANUAL` = the operator typed the label. `ACCESSIBILITY` = BlueShark's guided take-over observed the tap and labelled it from the control itself. `ACCESSIBILITY` markers are the tighter correlation anchor: they are stamped at the moment the control was driven, not when a human reached the phone. |
+| `markers[].control` (`ControlRef`) | The vendor-app control that produced the marker: `packageName`, `screen` (window title or activity), `viewId` (e.g. `com.vendor.app:id/btn_power`), `className`, `text`, `contentDescription`, `bounds` (`[left, top, right, bottom]` in screen pixels) and `rangeValue` (a slider's value at that moment). Null on a manual marker. |
+
+Use `control.viewId` to group repeats of the same control across a session, and `control.rangeValue`
+together with the frames that follow the marker to derive a parameter's byte encoding: the same
+control at three different values is exactly the evidence a `ParameterHypothesis` needs.
+
+Nothing the operator typed in the vendor app is ever recorded - the observer does not subscribe to
+text-change events - so a `ControlRef` only ever holds labels the app already displayed.
 
 The **HA install profile** (`HaInstallProfile`, schema_version 2) is the *minimal* strict
 subset consumed by the shipped `blueshark` integration (fixed-payload buttons). The

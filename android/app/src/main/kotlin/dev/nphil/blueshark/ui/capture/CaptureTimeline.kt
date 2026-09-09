@@ -14,6 +14,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -29,6 +30,7 @@ import dev.nphil.blueshark.hci.DissectionNode
 import dev.nphil.blueshark.model.AttOperation
 import dev.nphil.blueshark.model.BleEvent
 import dev.nphil.blueshark.model.CaptureMarker
+import dev.nphil.blueshark.model.MarkerSource
 import dev.nphil.blueshark.ui.theme.MonoFamily
 
 @Composable
@@ -57,6 +59,8 @@ internal fun ConnectionHeaderRow(handle: Int?, modifier: Modifier = Modifier) {
 
 @Composable
 internal fun MarkerRow(marker: CaptureMarker, modifier: Modifier = Modifier) {
+    val observed = marker.source == MarkerSource.ACCESSIBILITY
+    val viewId = marker.control?.viewId?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -68,17 +72,28 @@ internal fun MarkerRow(marker: CaptureMarker, modifier: Modifier = Modifier) {
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Icon(
-            imageVector = Icons.Filled.Flag,
-            contentDescription = "Capture marker",
+            imageVector = if (observed) Icons.Filled.TouchApp else Icons.Filled.Flag,
+            contentDescription = if (observed) "Control tapped in the vendor app" else "Capture marker",
             tint = MaterialTheme.colorScheme.onTertiaryContainer,
             modifier = Modifier.size(18.dp),
         )
-        Text(
-            text = marker.label,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onTertiaryContainer,
-            modifier = Modifier.weight(1f),
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = marker.label,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            if (viewId != null) {
+                Text(
+                    text = viewId,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = MonoFamily,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
         Text(
             text = formatCaptureTime(marker.timestampEpochMicros),
             style = MaterialTheme.typography.labelSmall,

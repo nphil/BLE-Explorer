@@ -5,6 +5,7 @@ import dev.nphil.blueshark.model.BleEvent
 import dev.nphil.blueshark.model.CaptureSession
 import dev.nphil.blueshark.model.EventDirection
 import dev.nphil.blueshark.model.EventSource
+import dev.nphil.blueshark.model.MarkerSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -15,6 +16,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.File
 
 /**
  * Four screens write the same session file. What must hold is that a write never publishes a
@@ -84,6 +86,39 @@ class SessionStoreTest {
             runBlocking { store.update(session.id) { it.copy(name = "back from the dead") } }
         }
         assertEquals(emptyList<CaptureSession>(), store.list())
+    }
+
+    /**
+     * A bundle written before the guided take-over existed has no `source` and no `control` on its
+     * markers. Sessions on a user's phone outlive the app version that wrote them, so every field
+     * added to the model has to be optional - this test is what makes that a rule and not a hope.
+     */
+    @Test
+    fun `a session written by an older build still opens`() = runBlocking {
+        val directory = folder.newFolder("legacy-${counter++}")
+        File(directory, "legacy-session.json").writeText(
+            """
+            {
+              "schemaVersion": 1,
+              "appVersion": "0.9.0",
+              "session": {
+                "id": "legacy-session",
+                "name": "old capture",
+                "createdAtEpochMs": 1,
+                "updatedAtEpochMs": 2,
+                "markers": [
+                  { "id": "m1", "timestampEpochMicros": 1000, "label": "power on" }
+                ]
+              }
+            }
+            """.trimIndent(),
+        )
+
+        val session = SessionStore(directory).load("legacy-session")
+
+        assertEquals("power on", session?.markers?.single()?.label)
+        assertEquals(MarkerSource.MANUAL, session?.markers?.single()?.source)
+        assertEquals(null, session?.markers?.single()?.control)
     }
 
     private companion object {

@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">BlueShark</string>
+    <string name="guide_service_label">BlueShark guided take-over</string>
+    <string name="guide_service_summary">Labels your taps in one vendor app so its Bluetooth traffic can be mapped.</string>
+    <string name="guide_service_description">Watches only the one vendor app you pick in BlueShark\'s Capture tab, so that every control you tap can be labelled in the capture timeline and listed as mapped or still unmapped.\n\nIt records control labels, resource ids, class names and on-screen positions. It never subscribes to text-change events, so nothing you type - no password, no note, no message - is delivered to BlueShark. No other app is observed, and nothing is observed at all until you select a vendor app. Everything stays on this device.</string>
 </resources>

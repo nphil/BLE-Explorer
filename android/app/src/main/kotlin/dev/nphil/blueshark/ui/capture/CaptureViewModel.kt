@@ -14,6 +14,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import dev.nphil.blueshark.AppContainer
 import dev.nphil.blueshark.data.MissingSessionException
+import dev.nphil.blueshark.guide.GuideState
 import dev.nphil.blueshark.hci.BtsnoopParser
 import dev.nphil.blueshark.hci.CollectAttempt
 import dev.nphil.blueshark.hci.CollectProgress
@@ -135,6 +136,10 @@ data class CaptureUiState(
     val selectedPeer: String? = null,
     val selectedEventId: String? = null,
     val dissection: DissectionNode? = null,
+    /** Live state of the guided take-over: service, checklist and its switches. */
+    val guideState: GuideState = GuideState(),
+    /** Whether the observer is enabled in the system's accessibility settings. */
+    val guideEnabledInSettings: Boolean = false,
     val error: String? = null,
 ) {
     val shellReady: Boolean get() = shizuku.ready
@@ -193,6 +198,7 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
 
     private val appContext: Context = container.appContext
     private val debug = container.debug
+    private val guide = container.guide
 
     init {
         viewModelScope.launch { debug.settings.collect { s -> _state.update { it.copy(ntfyEnabled = s.ntfyEnabled) } } }
@@ -224,7 +230,11 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
                 if (shizuku.ready && !wasReady && !_state.value.capabilities.probed) probe()
             }
         }
+        viewModelScope.launch { guide.state.collect { g -> _state.update { it.copy(guideState = g) } } }
+        // Observed taps become markers on exactly the path a typed marker takes.
+        viewModelScope.launch { guide.autoMarkers.collect { marker -> appendMarker(marker) } }
         viewModelScope.launch { loadSessions() }
+        refreshGuide()
         loadApps()
     }
 
@@ -425,12 +435,27 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
         }
         runCatching { appContext.startActivity(intent) }
             .onSuccess {
+                // The guide observes exactly the app the operator is about to drive, nothing else.
+                guide.setTarget(app.packageName)
                 _state.update { it.copy(vendorApp = app, completed = it.completed + CaptureStep.VENDOR_APP) }
             }
             .onFailure { report("Could not launch ${app.label}: ${it.message}") }
     }
 
     fun selectApp(app: VendorApp) = _state.update { it.copy(vendorApp = app) }
+
+    // ------------------------------------------------------------------ guided take-over
+
+    /** Re-reads the system setting; the screen calls this on every resume. */
+    fun refreshGuide() = _state.update { it.copy(guideEnabledInSettings = guide.accessibilityEnabled(appContext)) }
+
+    fun openAccessibilitySettings() = guide.openAccessibilitySettings(appContext)
+
+    fun setGuideAutoMark(enabled: Boolean) = guide.setAutoMark(enabled)
+
+    fun setGuideOverlay(enabled: Boolean) = guide.setOverlay(enabled)
+
+    fun setGuideHighlights(enabled: Boolean) = guide.setHighlights(enabled)
 
     // ------------------------------------------------------------------ markers
 
@@ -442,12 +467,23 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
             report("Type what you are about to do first")
             return
         }
-        val marker = CaptureMarker(timestampEpochMicros = System.currentTimeMillis() * 1_000, label = text)
+        _state.update { current ->
+            current.copy(
+                markerLabel = "",
+                recentLabels = (listOf(text) + current.recentLabels.filterNot { it == text }).take(RECENT_LABELS),
+            )
+        }
+        appendMarker(CaptureMarker(timestampEpochMicros = System.currentTimeMillis() * 1_000, label = text))
+    }
+
+    /**
+     * The one path a marker takes into the session, whether the operator typed it or the guided
+     * take-over observed the tap that produced it.
+     */
+    private fun appendMarker(marker: CaptureMarker) {
         _state.update { current ->
             current.copy(
                 markers = current.markers + marker,
-                markerLabel = "",
-                recentLabels = (listOf(text) + current.recentLabels.filterNot { it == text }).take(RECENT_LABELS),
                 completed = current.completed + CaptureStep.MARKERS,
             ).withTimeline()
         }
@@ -556,9 +592,15 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
 
     fun collect() = runExclusive("Collecting HCI log") {
         val result = snoop.collect { progress -> _state.update { it.copy(progress = progress) } }
+        result.attempts.forEach { debug.log("collect", "${if (it.ok) "ok" else "FAIL"} ${it.label}: ${it.detail}") }
         val file = result.btsnoop
         if (file == null) {
-            val message = result.error ?: "Collection failed"
+            // Every path that was tried, with the device's own words for why it failed.
+            val message = buildString {
+                append(result.error ?: "Collection failed")
+                result.attempts.filterNot { it.ok }.forEach { append("\n").append(it.label).append(": ").append(it.detail) }
+            }
+            debug.log("collect", "FAILED: $message")
             _state.update {
                 it.copy(
                     attempts = result.attempts,
@@ -566,7 +608,7 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
                     progress = CollectProgress(CollectStage.FAILED, message),
                 )
             }
-            report(message)
+            report(result.error ?: "Collection failed: see the report below")
             return@runExclusive
         }
         ingest(file, result.source, result.attempts, result.warnings, result.artifacts)
@@ -770,6 +812,24 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
 
     fun clearError() = _state.update { it.copy(error = null) }
 
+    /** Copies the collection report (attempts, warnings, error, summary) for pasting into a bug report. */
+    fun copyReport() {
+        val s = _state.value
+        val text = buildString {
+            append("BlueShark ").append(dev.nphil.blueshark.BuildConfig.VERSION_NAME).append(" collection report\n")
+            s.collectedFrom?.let { append("source: ").append(it).append('\n') }
+            s.summary?.let { append("records=").append(it.records).append(" att=").append(it.attEvents).append(" connections=").append(it.connections).append('\n') }
+            s.attempts.forEach { append(if (it.ok) "ok   " else "FAIL ").append(it.label).append(": ").append(it.detail).append('\n') }
+            s.warnings.forEach { append("warn ").append(it).append('\n') }
+            s.error?.let { append("error: ").append(it).append('\n') }
+            s.restartSteps.takeIf { it.isNotEmpty() }?.let { append("restart: ").append(it.joinToString(" | ")).append('\n') }
+            s.snoopModeDetail?.let { append("snoop: ").append(it).append('\n') }
+        }
+        appContext.getSystemService(ClipboardManager::class.java)
+            .setPrimaryClip(ClipData.newPlainText("BlueShark report", text))
+        report("Report copied (${text.length} chars)")
+    }
+
     private fun report(message: String) {
         _messages.tryEmit(message)
     }
@@ -798,8 +858,23 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (error: Throwable) {
-                _state.update { it.copy(error = error.message ?: error.toString()) }
-                report(error.message ?: "Failed")
+                // The whole cause chain plus the first app frame: enough to diagnose without adb.
+                val detail = buildString {
+                    append(label).append(" failed: ")
+                    var cause: Throwable? = error
+                    var first = true
+                    while (cause != null) {
+                        if (!first) append("\n  caused by ")
+                        append(cause.javaClass.simpleName).append(": ").append(cause.message ?: "(no message)")
+                        first = false
+                        cause = cause.cause?.takeIf { it !== cause }
+                    }
+                    error.stackTrace.firstOrNull { it.className.startsWith("dev.nphil.blueshark") }
+                        ?.let { append("\n  at ").append(it.className.substringAfterLast('.')).append('.').append(it.methodName).append(':').append(it.lineNumber) }
+                }
+                debug.log("error", detail)
+                _state.update { it.copy(error = detail) }
+                report(error.message ?: "$label failed")
             } finally {
                 shellJob = null
                 _state.update { it.copy(busy = null) }

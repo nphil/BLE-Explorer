@@ -169,12 +169,39 @@ data class BleEvent(
     val note: String = "",
 )
 
+/** How a marker got into the session: typed by the operator, or observed by the guided take-over. */
+@Serializable
+enum class MarkerSource { MANUAL, ACCESSIBILITY }
+
+/**
+ * One actionable control of the vendor app, as the accessibility observer saw it.
+ *
+ * Deliberately shallow: identity, position and the label already shown on screen. No typed text
+ * ever reaches this record - the observer never subscribes to text-change events.
+ *
+ * @param bounds screen rectangle as `[left, top, right, bottom]`, empty when unknown.
+ * @param rangeValue current value of a slider-like control at the moment of the interaction.
+ */
+@Serializable
+data class ControlRef(
+    val packageName: String,
+    val screen: String = "",
+    val viewId: String = "",
+    val className: String = "",
+    val text: String = "",
+    val contentDescription: String = "",
+    val bounds: List<Int> = emptyList(),
+    val rangeValue: Float? = null,
+)
+
 @Serializable
 data class CaptureMarker(
     val id: String = UUID.randomUUID().toString(),
     val timestampEpochMicros: Long,
     val label: String,
     val colorArgb: Long? = null,
+    val source: MarkerSource = MarkerSource.MANUAL,
+    val control: ControlRef? = null,
 )
 
 @Serializable

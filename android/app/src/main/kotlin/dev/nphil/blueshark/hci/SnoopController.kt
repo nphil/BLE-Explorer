@@ -18,7 +18,9 @@ import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.FilterInputStream
+import java.io.ByteArrayInputStream
 import java.io.InputStream
+import java.io.SequenceInputStream
 import java.util.zip.ZipInputStream
 
 /** The two snoop modes worth offering; AOSP also knows `filtered`, which truncates ACL payloads. */
@@ -141,7 +143,18 @@ data class BluetoothRestartResult(val ok: Boolean, val steps: List<String>, val 
 
 enum class CollectStage { DIRECT_FILE, DUMPSYS, BUGREPORT, EXTRACT, DECODE, DONE, FAILED }
 
-data class CollectProgress(val stage: CollectStage, val message: String, val percent: Int? = null)
+/**
+ * One progress tick. [percent] is set only when the total is genuinely known; otherwise the UI
+ * shows [bytes] and elapsed time rather than pretending. [startedAtMs] anchors the elapsed clock
+ * for the whole collect run, not the stage.
+ */
+data class CollectProgress(
+    val stage: CollectStage,
+    val message: String,
+    val percent: Int? = null,
+    val bytes: Long? = null,
+    val startedAtMs: Long = System.currentTimeMillis(),
+)
 
 data class CollectAttempt(val label: String, val ok: Boolean, val detail: String)
 
@@ -175,6 +188,7 @@ class SnoopController(
         val ID = listOf("id")
         val GET_SNOOP_MODE = listOf("getprop", "persist.bluetooth.btsnooplogmode")
         val LIST_LOG_DIR = listOf("ls", "-l", "/data/misc/bluetooth/logs/")
+        fun statSize(path: String) = listOf("stat", "-c", "%s", path)
         val DUMPSYS_HELP = listOf("dumpsys", "bluetooth_manager", "--help")
         val BLUETOOTH_MANAGER_HELP = listOf("cmd", "bluetooth_manager", "help")
         val BUGREPORTZ_VERSION = listOf("bugreportz", "-v")
@@ -197,6 +211,12 @@ class SnoopController(
         val ALL_PROPS = listOf("getprop")
         /** Dump (not follow) of the stack's own "Snoop Logs ..." announcements; `-e` filters by regex. */
         val LOGCAT_SNOOP_MODE = listOf("logcat", "-d", "-b", "main,system", "-v", "time", "-e", "Snoop Logs")
+        /** Where OEM stacks have been seen to keep snoop logs; listed (not read) for the diagnostics dump. */
+        val SNOOP_DIR_CANDIDATES = listOf(
+            "/data/misc/bluetooth/logs", "/data/misc/bluetooth", "/data/vendor/bluetooth", "/data/vendor/bt",
+            "/data/log/bt", "/data/misc/logd", "/sdcard/MIUI/debug_log", "/sdcard/btsnoop", "/data/local/tmp",
+        )
+        fun listDir(path: String) = listOf("ls", "-la", path)
         val SETTINGS_GLOBAL = listOf("settings", "list", "global")
         val SETTINGS_SECURE = listOf("settings", "list", "secure")
         /** Newest stack lines mentioning snoop/btsnoop, whatever the tag; bounded by -t. */
@@ -230,10 +250,20 @@ class SnoopController(
                 val lines = text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() && (filter == null || filter.containsMatchIn(it)) }.take(80).toList()
                 if (lines.isEmpty()) append("(nothing)\n") else lines.forEach { append(it).append('\n') }
             }
+            val dirListings = buildString {
+                for (dir in Argv.SNOOP_DIR_CANDIDATES) {
+                    val r = shell.run(Argv.listDir(dir), SHORT_TIMEOUT)
+                    append(dir).append(": ")
+                    if (r.succeeded) r.text.lineSequence().take(12).forEach { append("\n    ").append(it) }
+                    else append(r.failure.lineSequence().first())
+                    append('\n')
+                }
+            }
             val diagnostics = section("getprop", allProps.stdout) +
+                section("snoop directory candidates (ls -la)", dirListings, null) +
+                section("dumpsys bluetooth_manager (log/snoop/path lines)", dumpsys.stdout, Regex("(?i)snoop|log.?path|btsnoop|logging|\\.log")) +
                 section("settings global", settingsGlobal.stdout) +
                 section("settings secure", settingsSecure.stdout) +
-                section("dumpsys bluetooth_manager (snoop lines)", dumpsys.stdout, Regex("(?i)snoop")) +
                 section("logcat (snoop lines, newest 400 entries)", snoopLogcat.stdout, null)
             SnoopCapabilities(
                 diagnostics = diagnostics,
@@ -400,7 +430,12 @@ class SnoopController(
             onProgress(CollectProgress(CollectStage.EXTRACT, "Searching the bugreport for Bluetooth logs"))
             val found = withContext(Dispatchers.IO) { scanBugreportZip(zipped, stamp) }
             if (found.snoopFile != null) {
-                attempts += CollectAttempt("bugreport FS copy", true, "${found.snoopFile.length()} bytes from ${found.snoopEntry}")
+                attempts += CollectAttempt(
+                    "bugreport FS copy",
+                    true,
+                    "${found.snoopFile.length()} bytes from ${found.snoopEntry}" +
+                        if (found.snoopEntry.orEmpty().contains(".last")) " (a rotated file: the stack restarted since; re-run the action and collect again if your traffic is missing)" else "",
+                )
                 artifacts += found.snoopFile
                 onProgress(CollectProgress(CollectStage.DONE, "Extracted ${found.snoopEntry}"))
                 return CollectResult(found.snoopFile, "bugreport: ${found.snoopEntry}", artifacts, attempts)
@@ -412,8 +447,9 @@ class SnoopController(
             attempts += CollectAttempt(
                 "bugreport contents",
                 false,
-                "neither FS/data/misc/bluetooth/logs/btsnoop_hci.log nor a ${BtsnoozDecoder.BEGIN_MARKER} block " +
-                    "(scanned ${found.entriesScanned} entries)",
+                "no entry starting with the btsnoop magic and no ${BtsnoozDecoder.BEGIN_MARKER} block " +
+                    "(scanned ${found.entriesScanned} entries). Bluetooth-related entries: " +
+                    (found.bluetoothEntries.takeIf { it.isNotEmpty() }?.joinToString("\n  ", prefix = "\n  ") ?: "none"),
             )
             onProgress(CollectProgress(CollectStage.FAILED, "The bugreport contained no Bluetooth snoop data"))
             return CollectResult(
@@ -433,15 +469,65 @@ class SnoopController(
         attempts: MutableList<CollectAttempt>,
         onProgress: (CollectProgress) -> Unit,
     ): File? {
-        onProgress(CollectProgress(CollectStage.BUGREPORT, "Running bugreportz -s (this takes minutes)"))
+        val started = System.currentTimeMillis()
+        fun tick(message: String, percent: Int? = null, bytes: Long? = null) =
+            onProgress(CollectProgress(CollectStage.BUGREPORT, message, percent, bytes, started))
+
+        // `-p` reports PROGRESS:n/m, so it goes first: a real bar. `-s` streams the zip with no
+        // total, so it is the fallback and shows bytes plus elapsed time instead.
+        tick("bugreportz -p: starting (a full bugreport takes one to several minutes)", percent = 0)
+        var path: String? = null
+        var failure: String? = null
+        val finished = withTimeoutOrNull(BUGREPORT_TIMEOUT) {
+            shell.runStreaming(Argv.BUGREPORTZ_PROGRESS).buffer(64).collect { line ->
+                when {
+                    line.startsWith("PROGRESS:") -> {
+                        val fraction = line.removePrefix("PROGRESS:").trim().split('/')
+                        val done = fraction.getOrNull(0)?.toLongOrNull()
+                        val total = fraction.getOrNull(1)?.toLongOrNull()
+                        val percent = if (done != null && total != null && total > 0) (done * 100 / total).toInt().coerceIn(0, 100) else null
+                        tick("bugreportz -p: ${percent?.let { "$it%" } ?: line.trim()}", percent)
+                    }
+                    line.startsWith("OK:") -> path = line.removePrefix("OK:").trim()
+                    line.startsWith("FAIL:") -> failure = line.removePrefix("FAIL:").trim()
+                }
+            }
+        }
+        val reported = path
+        if (reported != null && BUGREPORT_PATH.matches(reported)) {
+            val size = shell.run(Argv.statSize(reported), SHORT_TIMEOUT).text.toLongOrNull()
+            tick("Copying ${reported.substringAfterLast('/')}" + (size?.let { " (${it / (1024 * 1024)} MiB)" } ?: ""), percent = size?.let { 0 }, bytes = 0)
+            val copied = shell.runToFile(
+                argv = Argv.cat(reported),
+                timeoutMs = COPY_TIMEOUT,
+                target = zip,
+                maxBytes = MAX_BUGREPORT_BYTES,
+                onBytes = { bytes ->
+                    val percent = size?.takeIf { it > 0 }?.let { (bytes * 100 / it).toInt().coerceIn(0, 100) }
+                    tick("Copying: ${bytes / (1024 * 1024)} MiB" + (size?.let { " of ${it / (1024 * 1024)} MiB" } ?: ""), percent, bytes)
+                },
+            )
+            if (copied.succeeded && hasZipMagic(zip)) {
+                attempts += CollectAttempt("bugreportz -p", true, "${zip.length()} bytes from $reported")
+                return zip
+            }
+            attempts += CollectAttempt("bugreportz -p", false, "could not copy $reported: ${copied.failure}")
+            zip.delete()
+        } else {
+            attempts += CollectAttempt(
+                "bugreportz -p",
+                false,
+                failure ?: reported?.let { "unusable path \"$it\"" } ?: if (finished == null) "timed out" else "no OK: line",
+            )
+        }
+
+        tick("Falling back to bugreportz -s (streams the zip; no total is reported)", bytes = 0)
         val streamed = shell.runToFile(
             argv = Argv.BUGREPORTZ_STREAM,
             timeoutMs = BUGREPORT_TIMEOUT,
             target = zip,
             maxBytes = MAX_BUGREPORT_BYTES,
-            onBytes = { bytes ->
-                onProgress(CollectProgress(CollectStage.BUGREPORT, "bugreportz -s: ${bytes / (1024 * 1024)} MiB received"))
-            },
+            onBytes = { bytes -> tick("bugreportz -s: ${bytes / (1024 * 1024)} MiB received", bytes = bytes) },
         )
         if (streamed.succeeded && hasZipMagic(zip)) {
             attempts += CollectAttempt("bugreportz -s", true, "${zip.length()} bytes")
@@ -452,44 +538,6 @@ class SnoopController(
             false,
             if (streamed.bytes > 0) "output was not a zip (${streamed.bytes} bytes)" else streamed.failure,
         )
-        zip.delete()
-
-        onProgress(CollectProgress(CollectStage.BUGREPORT, "Falling back to bugreportz -p"))
-        var path: String? = null
-        var failure: String? = null
-        val finished = withTimeoutOrNull(BUGREPORT_TIMEOUT) {
-            shell.runStreaming(Argv.BUGREPORTZ_PROGRESS).buffer(64).collect { line ->
-                when {
-                    line.startsWith("PROGRESS:") -> {
-                        val fraction = line.removePrefix("PROGRESS:").trim().split('/')
-                        val percent = fraction.getOrNull(0)?.toIntOrNull()?.let { done ->
-                            val total = fraction.getOrNull(1)?.toIntOrNull() ?: 100
-                            if (total > 0) done * 100 / total else null
-                        }
-                        onProgress(CollectProgress(CollectStage.BUGREPORT, "bugreportz -p: ${percent ?: 0}%", percent))
-                    }
-
-                    line.startsWith("OK:") -> path = line.removePrefix("OK:").trim()
-                    line.startsWith("FAIL:") -> failure = line.removePrefix("FAIL:").trim()
-                }
-            }
-        }
-        val reported = path
-        if (reported == null || !BUGREPORT_PATH.matches(reported)) {
-            attempts += CollectAttempt(
-                "bugreportz -p",
-                false,
-                failure ?: reported?.let { "unusable path \"$it\"" } ?: if (finished == null) "timed out" else "no OK: line",
-            )
-            return null
-        }
-        onProgress(CollectProgress(CollectStage.BUGREPORT, "Copying $reported"))
-        val copied = shell.runToFile(Argv.cat(reported), COPY_TIMEOUT, zip, MAX_BUGREPORT_BYTES)
-        if (copied.succeeded && hasZipMagic(zip)) {
-            attempts += CollectAttempt("bugreportz -p", true, "${zip.length()} bytes from $reported")
-            return zip
-        }
-        attempts += CollectAttempt("bugreportz -p", false, "could not copy $reported: ${copied.failure}")
         zip.delete()
         return null
     }
@@ -532,34 +580,51 @@ class SnoopController(
         val snooz: ByteArray?,
         val snoozEntry: String?,
         val entriesScanned: Int,
+        /** Every entry whose name smells of Bluetooth: what to show when nothing usable was found. */
+        val bluetoothEntries: List<String>,
     )
 
     /**
-     * One streaming pass over the bugreport zip. The FS copy of the snoop file wins when present
-     * because it is the unfiltered capture; the btsnooz summary is the fallback.
+     * One streaming pass over the bugreport zip. Any entry that starts with the btsnoop magic is
+     * a capture, whatever the OEM named or placed it (AOSP: `FS/data/misc/bluetooth/logs/
+     * btsnoop_hci.log`; Qualcomm/HyperOS builds differ). The current file beats a `.last`
+     * rotation; the btsnooz summary in the text report is the fallback.
      */
     private fun scanBugreportZip(zip: File, stamp: Long): ZipFindings {
         var snoopFile: File? = null
         var snoopEntry: String? = null
+        var snoopIsRotated = true
         var snooz: ByteArray? = null
         var snoozEntry: String? = null
         var entries = 0
+        val related = ArrayList<String>()
         ZipInputStream(BufferedInputStream(zip.inputStream(), READ_BUFFER)).use { zin ->
             while (true) {
                 val entry = zin.nextEntry ?: break
                 entries++
                 val name = entry.name
+                if (entry.isDirectory) { zin.closeEntry(); continue }
+                val smellsBluetooth = BLUETOOTH_ENTRY.containsMatchIn(name)
+                if (smellsBluetooth && related.size < MAX_RELATED_ENTRIES) {
+                    related += name + if (entry.size >= 0) " (${entry.size} B)" else ""
+                }
+                val rotated = name.endsWith(".last") || name.contains(".last.")
+                val wantSnoop = smellsBluetooth && !name.endsWith(".txt", ignoreCase = true) && (snoopFile == null || (snoopIsRotated && !rotated))
                 when {
-                    entry.isDirectory -> Unit
-
-                    snoopFile == null && name.contains(SNOOP_IN_ZIP) && !name.endsWith(".last") -> {
-                        val target = File(cacheRoot, "bugreport-$stamp-btsnoop.log")
-                        val bytes = copyEntry(zin, target, MAX_SNOOP_BYTES)
-                        if (bytes > 0 && hasBtsnoopMagic(target)) {
-                            snoopFile = target
-                            snoopEntry = name
-                        } else {
-                            target.delete()
+                    wantSnoop -> {
+                        val head = ByteArray(BTSNOOP_MAGIC.size)
+                        val read = readFully(zin, head)
+                        if (read == head.size && head.contentEquals(BTSNOOP_MAGIC)) {
+                            val target = File(cacheRoot, "bugreport-$stamp-btsnoop${if (rotated) "-last" else ""}.log")
+                            val bytes = copyEntry(SequenceInputStream(ByteArrayInputStream(head), NonClosing(zin)), target, MAX_SNOOP_BYTES)
+                            if (bytes > head.size) {
+                                snoopFile?.takeIf { it != target }?.delete()
+                                snoopFile = target
+                                snoopEntry = name
+                                snoopIsRotated = rotated
+                            } else {
+                                target.delete()
+                            }
                         }
                     }
 
@@ -574,7 +639,17 @@ class SnoopController(
                 zin.closeEntry()
             }
         }
-        return ZipFindings(snoopFile, snoopEntry, snooz, snoozEntry, entries)
+        return ZipFindings(snoopFile, snoopEntry, snooz, snoozEntry, entries, related)
+    }
+
+    private fun readFully(source: InputStream, into: ByteArray): Int {
+        var total = 0
+        while (total < into.size) {
+            val n = source.read(into, total, into.size - total)
+            if (n < 0) break
+            total += n
+        }
+        return total
     }
 
     private fun copyEntry(source: InputStream, target: File, maxBytes: Long): Long {
@@ -703,7 +778,9 @@ class SnoopController(
         const val MAX_BUGREPORT_BYTES = 512L * 1024 * 1024
         const val MAX_LOGCAT_BYTES = 16L * 1024 * 1024
 
-        const val SNOOP_IN_ZIP = "data/misc/bluetooth/logs/btsnoop_hci.log"
+        /** Entry names worth sniffing for the btsnoop magic, and worth listing when nothing matched. */
+        val BLUETOOTH_ENTRY = Regex("""(?i)snoop|bluetooth|/bt[_/]|btsnoop|hci|\.cfa$""")
+        const val MAX_RELATED_ENTRIES = 40
         val BUGREPORT_PATH = Regex("^/[A-Za-z0-9._/@+-]{1,255}\\.zip$")
         val SAFE_NAME = Regex("[^A-Za-z0-9._-]")
 
