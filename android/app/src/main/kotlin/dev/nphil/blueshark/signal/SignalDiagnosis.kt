@@ -61,11 +61,14 @@ object SignalDiagnosis {
             } else {
                 out += Hint(
                     HintSeverity.BAD,
-                    "No signal here",
+                    if (stats.sinceLastMs == null) "Nothing heard yet" else "No signal here",
                     if (stats.sinceLastMs == null) {
-                        "No packet at all in the last $windowSeconds s. Either the device is out of range " +
-                            "of this spot, or it is not advertising: both look the same from here until it " +
-                            "comes back."
+                        "No packet in the last $windowSeconds s. A peripheral that is connected to any " +
+                            "central — a Home Assistant proxy holding its slot, the vendor app, a hub — " +
+                            "does not advertise at all, and from here that is indistinguishable from being " +
+                            "out of range. Before surveying, make sure nothing is connected to it (disable or " +
+                            "reload its Home Assistant entry, close the vendor app), then confirm packets " +
+                            "arrive right next to the device."
                     } else {
                         "Last packet ${seconds(stats.sinceLastMs)} ago, past the $SIGNAL_LOST_MS ms cutoff. " +
                             "A proxy in this spot would already have marked the entity unavailable."

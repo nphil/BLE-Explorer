@@ -45,7 +45,8 @@ class SignalDiagnosisTest {
             connectable = true,
             presence = List(60) { false },
         )
-        assertEquals("No signal here", never.first().title)
+        assertEquals("Nothing heard yet", never.first().title)
+        assertTrue(never.first().detail.contains("does not advertise"))
 
         // A device that never said it was connectable cannot be blamed on another central.
         val unknown = SignalDiagnosis.hints(
