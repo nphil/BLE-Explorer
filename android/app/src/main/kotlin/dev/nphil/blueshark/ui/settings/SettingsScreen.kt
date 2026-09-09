@@ -115,7 +115,7 @@ fun SettingsScreen(container: AppContainer, settings: ThemeSettings, expanded: B
                 Text("About", style = MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "BlueShark ${BuildConfig.VERSION_NAME}. Local-first Bluetooth LE reverse-engineering workbench for Home Assistant. Nothing leaves this device unless you share an export.",
+                    "BlueShark ${BuildConfig.VERSION_NAME}. Local-first Bluetooth LE reverse-engineering workbench for Home Assistant. Nothing leaves this device unless you share an export or turn on the ntfy debug sink above.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -139,9 +139,10 @@ private fun DebugSection(container: AppContainer) {
             Column(Modifier.weight(1f)) {
                 Text("Send debug log to ntfy.sh", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Publishes probe results, step outcomes and errors (never packet payloads) to the topic below so " +
-                        "they can be read remotely. Batched every 10 s, at most 200 messages a day, well under ntfy's " +
-                        "rate limits. Anyone who knows the topic can read it.",
+                    "Publishes probe results, step outcomes and errors (never packet payloads) to the public ntfy.sh " +
+                        "topic below. Bluetooth addresses and device identifiers are masked before upload and the " +
+                        "secure-settings section is dropped, but anyone who knows the topic name can read what is sent, " +
+                        "and ntfy.sh keeps it for hours. Batched every 10 s, at most 200 messages a day.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

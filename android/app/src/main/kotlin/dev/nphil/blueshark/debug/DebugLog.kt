@@ -32,14 +32,7 @@ import java.util.ArrayDeque
 import java.util.Date
 import java.util.Locale
 
-/**
- * ntfy.sh budget (docs.ntfy.sh/publish/#limitations): 4096 bytes per message, 60-request burst then
- * one request per 5 s, 250 messages per day. The sink stays well inside all three: one message per
- * [FLUSH_INTERVAL_MS], bodies capped at [MAX_BODY_BYTES], and a hard [DAILY_MESSAGE_CAP].
- */
-private const val FLUSH_INTERVAL_MS = 10_000L
-private const val MAX_BODY_BYTES = 3_800
-private const val DAILY_MESSAGE_CAP = 200
+/** Rate limits, batching and redaction live in [NtfyBudget]; this class is the Android plumbing. */
 private const val RING_CAPACITY = 400
 private const val DEFAULT_TOPIC = "blueshark-nphil-XWESpf9F3gas"
 
@@ -72,6 +65,7 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
     private val pending = ArrayDeque<String>()
     private val lock = Mutex()
     private var flusher: Job? = null
+    @Volatile private var lastSendMs = 0L
 
     val settings: Flow<DebugSettings> = store.data.map { prefs ->
         DebugSettings(
@@ -114,19 +108,26 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
         if (topic.matches(TOPIC_RULE)) store.edit { it[KEY_TOPIC] = topic }
     }
 
-    /** Publishes one message immediately, subject to the daily cap. Used for "Send diagnostics now". */
-    suspend fun sendNow(title: String, body: String): String {
-        val s = settings.first()
-        return publish(s, title, body)
-    }
+    /**
+     * Publishes one dump immediately as a single attachment (ntfy treats bodies over 4 KB as
+     * attachments anyway; naming the file keeps it in one piece and one budget slot).
+     */
+    suspend fun sendNow(title: String, body: String): String =
+        publish(settings.first(), title, NtfyBudget.redact(body), filename = "blueshark-diagnostics.txt")
 
     private fun startFlusher() {
         if (flusher?.isActive == true) return
         flusher = scope.launch {
             while (true) {
-                delay(FLUSH_INTERVAL_MS)
-                val batch = lock.withLock { takeBatch() } ?: continue
-                val result = publish(settings.first(), "BlueShark log", batch)
+                delay(NtfyBudget.MIN_INTERVAL_MS)
+                val batch = lock.withLock {
+                    val (body, rest) = NtfyBudget.takeBatch(pending.toList())
+                    if (body.isEmpty()) return@withLock null
+                    pending.clear(); pending.addAll(rest)
+                    _status.update { it.copy(queuedLines = pending.size) }
+                    body
+                } ?: continue
+                val result = publish(settings.first(), "BlueShark log", NtfyBudget.redact(batch))
                 _status.update { it.copy(lastResult = result) }
             }
         }
@@ -137,35 +138,25 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
         flusher = null
     }
 
-    /** Pops as many whole lines as fit in one ntfy body; the rest waits for the next interval. */
-    private fun takeBatch(): String? {
-        if (pending.isEmpty()) return null
-        val sb = StringBuilder()
-        while (pending.isNotEmpty()) {
-            val next = pending.first()
-            val projected = sb.length + next.length + 1
-            if (projected > MAX_BODY_BYTES && sb.isNotEmpty()) break
-            pending.removeFirst()
-            sb.append(if (projected > MAX_BODY_BYTES) next.take(MAX_BODY_BYTES) else next).append('\n')
-        }
-        _status.update { it.copy(queuedLines = pending.size) }
-        return sb.toString()
-    }
 
-    private suspend fun publish(s: DebugSettings, title: String, body: String): String {
+    private suspend fun publish(s: DebugSettings, title: String, body: String, filename: String? = null): String {
         if (!s.ntfyEnabled) return "ntfy sink is off"
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val now = System.currentTimeMillis()
         var allowed = false
         store.edit { prefs ->
-            val sent = if (prefs[KEY_DAY] == today) prefs[KEY_SENT_TODAY] ?: 0 else 0
-            if (sent < DAILY_MESSAGE_CAP) {
-                prefs[KEY_DAY] = today
-                prefs[KEY_SENT_TODAY] = sent + 1
-                allowed = true
-                _status.update { it.copy(sentToday = sent + 1) }
-            }
+            val counter = NtfyBudget.Counter(prefs[KEY_DAY] ?: "", prefs[KEY_SENT_TODAY] ?: 0)
+            val (ok, next) = NtfyBudget.admit(counter, today, now, lastSendMs)
+            allowed = ok
+            prefs[KEY_DAY] = next.dayKey
+            prefs[KEY_SENT_TODAY] = next.sentToday
+            _status.update { it.copy(sentToday = next.sentToday) }
         }
-        if (!allowed) return "daily cap of $DAILY_MESSAGE_CAP messages reached; resumes tomorrow"
+        if (!allowed) {
+            return if (now - lastSendMs < NtfyBudget.MIN_INTERVAL_MS) "rate-limited; try again in a few seconds"
+            else "daily cap of ${NtfyBudget.DAILY_CAP} messages reached; resumes tomorrow"
+        }
+        lastSendMs = now
         return withContext(Dispatchers.IO) {
             try {
                 val conn = URL(s.topicUrl).openConnection() as HttpURLConnection
@@ -176,6 +167,7 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
                 conn.setRequestProperty("Title", title)
                 conn.setRequestProperty("Priority", "min")
                 conn.setRequestProperty("Content-Type", "text/plain; charset=utf-8")
+                filename?.let { conn.setRequestProperty("Filename", it) }
                 conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
                 val code = conn.responseCode
                 conn.disconnect()
