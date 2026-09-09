@@ -190,7 +190,9 @@ class SnoopController(
      * this, because the file itself outlives the state that pointed at it.
      */
     fun newestCachedCapture(): File? = cacheRoot.listFiles()
-        ?.filter { it.isFile && (it.name.endsWith(".log") || it.name.contains("btsnoop")) }
+        // Content, not name: the cache also holds bugreport zips, dumpsys and logcat text, and an
+        // import keeps whatever name the picker gave it. Only a real btsnoop is worth uploading.
+        ?.filter { it.isFile && it.length() > 0 && hasBtsnoopMagic(it) }
         ?.maxByOrNull { it.lastModified() }
 
     /** Exact argument vectors used by this controller. */

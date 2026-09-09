@@ -5,6 +5,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import dev.nphil.blueshark.BuildConfig
+import android.os.Build
 import android.provider.OpenableColumns
 import android.provider.Settings
 import androidx.lifecycle.ViewModel
@@ -307,7 +309,12 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
     fun sendDiagnostics() {
         viewModelScope.launch {
             val c = _state.value.capabilities
-            val body = ("effective=${c.effectiveSnoopMode.ifBlank { "(unset)" }} service=${c.serviceSnoopSetting} stack=${c.stackSnoopLog}\n" + c.diagnostics)
+            val body = (
+                "BlueShark ${BuildConfig.VERSION_NAME} on ${Build.MANUFACTURER} ${Build.MODEL} " +
+                    "(Android ${Build.VERSION.RELEASE})\n" +
+                    "effective=${c.effectiveSnoopMode.ifBlank { "(unset)" }} " +
+                    "service=${c.serviceSnoopSetting} stack=${c.stackSnoopLog}\n" + c.diagnostics
+                )
             report(debug.sendNow("BlueShark diagnostics", body.take(3_800)))
         }
     }
@@ -521,7 +528,10 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
 
     private suspend fun loadSessions() {
         val sessions = container.sessions.list().map { SessionOption(it.id, it.name, it.events.size) }
-        _state.update { it.copy(sessions = sessions) }
+        // A cold start opens no session, so without this the upload action would stay hidden even
+        // though the capture from the last run is still sitting in the cache.
+        val cached = withContext(Dispatchers.IO) { snoop.newestCachedCapture()?.absolutePath }
+        _state.update { it.copy(sessions = sessions, capturePath = it.capturePath ?: cached) }
     }
 
     fun chooseSession(id: String) {
