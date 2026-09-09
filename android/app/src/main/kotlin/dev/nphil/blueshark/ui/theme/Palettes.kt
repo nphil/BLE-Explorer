@@ -41,9 +41,9 @@ object Palettes {
             Palette("material_palenight", "Material Palenight", "Lighter", "Palenight", scheme_material_palenight_lighter, scheme_material_palenight_palenight),
             Palette("github", "GitHub", "Light", "Dark", scheme_github_light, scheme_github_dark),
             Palette("horizon", "Horizon", "Bright", "Dark", scheme_horizon_bright, scheme_horizon_dark),
-            Palette("synthwave84", "Synthwave '84", "Light fallback", "Dark", scheme_synthwave84_light_fallback, scheme_synthwave84_dark),
-            Palette("zenburn", "Zenburn", "Light fallback", "Dark", scheme_zenburn_light_fallback, scheme_zenburn_dark),
-            Palette("cobalt2", "Cobalt2", "Light fallback", "Dark", scheme_cobalt2_light_fallback, scheme_cobalt2_dark),
+            Palette("synthwave84", "Synthwave '84", "Light", "Dark", scheme_synthwave84_light_fallback, scheme_synthwave84_dark),
+            Palette("zenburn", "Zenburn", "Light", "Dark", scheme_zenburn_light_fallback, scheme_zenburn_dark),
+            Palette("cobalt2", "Cobalt2", "Light", "Dark", scheme_cobalt2_light_fallback, scheme_cobalt2_dark),
             Palette("nightfox", "Nightfox", "Dayfox", "Nightfox", scheme_nightfox_dayfox, scheme_nightfox_nightfox),
         )
     }

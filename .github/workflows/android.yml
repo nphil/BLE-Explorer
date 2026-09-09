@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
     paths: ["android/**", ".github/workflows/android.yml"]
-    tags: ["v*"]
   pull_request:
     paths: ["android/**"]
   workflow_dispatch:
@@ -38,46 +37,13 @@ jobs:
       - name: Unit tests
         run: ./gradlew :app:testDebugUnitTest --no-daemon
 
-      - name: Decode release keystore
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
-        run: |
-          test -n "$KEYSTORE_B64"
-          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/release.jks"
-          chmod 600 "$RUNNER_TEMP/release.jks"
-
-      - name: Build signed release APK
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          BLUESHARK_VERSION: ${{ github.ref_name }}
-          RELEASE_STORE_FILE: ${{ runner.temp }}/release.jks
-          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
-          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
-          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
-        run: |
-          ./gradlew :app:assembleRelease --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk "../BlueShark-${GITHUB_REF_NAME}.apk"
-          cp app/build/outputs/mapping/release/mapping.txt "../BlueShark-${GITHUB_REF_NAME}-mapping.txt"
-          sha256sum "../BlueShark-${GITHUB_REF_NAME}.apk" > "../BlueShark-${GITHUB_REF_NAME}.apk.sha256"
-
-      - name: Build debug APK (non-release)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+      - name: Build debug APK
         env:
           BLUESHARK_VERSION: 0.0.0-${{ github.sha }}
         run: ./gradlew :app:assembleDebug --no-daemon
 
       - uses: actions/upload-artifact@v4
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         with:
           name: blueshark-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Attach APK to GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            BlueShark-${{ github.ref_name }}.apk
-            BlueShark-${{ github.ref_name }}.apk.sha256
-            BlueShark-${{ github.ref_name }}-mapping.txt
