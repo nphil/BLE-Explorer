@@ -1,6 +1,18 @@
 package dev.nphil.blueshark.ui.settings
 
 import androidx.compose.foundation.background
+import dev.nphil.blueshark.debug.DebugSettings
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.Switch
+import androidx.compose.material3.OutlinedTextField
+import android.content.ClipboardManager
+import android.content.ClipData
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -96,6 +108,9 @@ fun SettingsScreen(container: AppContainer, settings: ThemeSettings, expanded: B
             )
         }
         item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+            DebugSection(container)
+        }
+        item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
             Column(Modifier.padding(top = 24.dp)) {
                 Text("About", style = MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(8.dp))
@@ -106,6 +121,60 @@ fun SettingsScreen(container: AppContainer, settings: ThemeSettings, expanded: B
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun DebugSection(container: AppContainer) {
+    val scope = container.appScope
+    val settings by container.debug.settings.collectAsStateWithLifecycle(DebugSettings())
+    val status by container.debug.status.collectAsStateWithLifecycle()
+    var topicDraft by remember(settings.topic) { mutableStateOf(settings.topic) }
+    val clipboard = LocalContext.current.getSystemService(ClipboardManager::class.java)
+
+    Column(Modifier.padding(top = 24.dp)) {
+        Text("Debug logging", style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Send debug log to ntfy.sh", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Publishes probe results, step outcomes and errors (never packet payloads) to the topic below so " +
+                        "they can be read remotely. Batched every 10 s, at most 200 messages a day, well under ntfy's " +
+                        "rate limits. Anyone who knows the topic can read it.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(16.dp))
+            Switch(
+                checked = settings.ntfyEnabled,
+                onCheckedChange = { on -> scope.launch { container.debug.setEnabled(on) } },
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = topicDraft,
+                onValueChange = { topicDraft = it.filter { c -> c.isLetterOrDigit() || c == '-' || c == '_' }.take(64) },
+                label = { Text("ntfy topic") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(
+                onClick = { scope.launch { container.debug.setTopic(topicDraft) } },
+                enabled = topicDraft != settings.topic && topicDraft.isNotBlank(),
+            ) { Text("Save") }
+            TextButton(onClick = {
+                clipboard.setPrimaryClip(ClipData.newPlainText("ntfy topic", settings.topicUrl))
+            }) { Text("Copy URL") }
+        }
+        Text(
+            settings.topicUrl + if (settings.ntfyEnabled) "  ·  queued ${status.queuedLines}  ·  sent today ${status.sentToday}" +
+                (status.lastResult.takeIf { it.isNotBlank() }?.let { "  ·  $it" } ?: "") else "",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

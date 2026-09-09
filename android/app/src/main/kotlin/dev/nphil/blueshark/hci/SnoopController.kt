@@ -40,6 +40,12 @@ data class SnoopCapabilities(
      * not depend on which property an OEM's Settings toggle writes or on what shell may read.
      */
     val stackSnoopLog: String = "",
+    /**
+     * `sSnoopLogSettingAtEnable` from `dumpsys bluetooth_manager`: the mode the Bluetooth service
+     * read when the adapter last came up. Present on AOSP and OEM stacks alike (HyperOS included),
+     * which makes it the most portable ground truth we have; "" if the line is absent.
+     */
+    val serviceSnoopSetting: String = "",
     /** Broad, read-only dump of everything Bluetooth-related the shell can see; for diagnosing OEM toggles. */
     val diagnostics: String = "",
     val logDirectory: String = "",
@@ -73,15 +79,25 @@ data class SnoopCapabilities(
             return ""
         }
 
-    /** The stack's own announcement wins; the property view is the fallback before any restart. */
-    val effectiveSnoopMode: String get() = stackSnoopMode.ifBlank { propertySnoopMode }
+    /** What the service recorded at enable, else the stack's logcat line, else the property view. */
+    val effectiveSnoopMode: String
+        get() = serviceSnoopSetting.lowercase().takeIf { it in KNOWN_MODES }
+            ?: stackSnoopMode.ifBlank { propertySnoopMode }
     val snoopModeIsFull: Boolean get() = effectiveSnoopMode.equals("full", ignoreCase = true)
     val probed: Boolean get() = probedAtEpochMs > 0
 
     private fun propertyValue(name: String): String? =
         snoopProperties.firstOrNull { it.startsWith("[$name]: [") }
             ?.substringAfter("]: [")?.removeSuffix("]")
+
+    private companion object {
+        val KNOWN_MODES = setOf("full", "filtered", "disabled", "kernel")
+    }
 }
+
+/** `sSnoopLogSettingAtEnable = FULL` -> "FULL"; "" when the dump has no such line. */
+fun serviceSnoopSetting(dumpsysOutput: String): String =
+    Regex("""sSnoopLogSettingAtEnable\s*=\s*(\S+)""").find(dumpsysOutput)?.groupValues?.get(1) ?: ""
 
 /** Filters `getprop` output down to snoop-related lines (plus `ro.debuggable`), sorted for stable display. */
 fun snoopPropertyLines(getpropOutput: String): List<String> =
@@ -225,6 +241,7 @@ class SnoopController(
                 snoopProperties = snoopPropertyLines(allProps.stdout),
                 snoopMode = mode.text,
                 stackSnoopLog = latestStackSnoopLine(stackLog.stdout),
+                serviceSnoopSetting = serviceSnoopSetting(dumpsys.stdout),
                 logDirectory = listing.text.ifBlank { listing.failure },
                 logDirectoryReadable = listing.succeeded && listing.text.isNotBlank(),
                 bluetoothManagerShell = managerHelp.succeeded || managerHelp.text.contains("enable"),

@@ -1,5 +1,7 @@
 package dev.nphil.blueshark.ui.capture
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -123,6 +125,8 @@ data class CaptureUiState(
     val snoopModeDetail: String? = null,
     /** Shell may not write the snoop property; the user must flip the Developer options toggle. */
     val snoopDenied: Boolean = false,
+    /** Mirrors Settings > Debug logging so the capability card can offer "Send to ntfy". */
+    val ntfyEnabled: Boolean = false,
     val restartSteps: List<String> = emptyList(),
     val logcatRunning: Boolean = false,
     val logcatFile: String? = null,
@@ -188,6 +192,11 @@ private fun CaptureUiState.withTimeline(): CaptureUiState {
 class CaptureViewModel(private val container: AppContainer) : ViewModel() {
 
     private val appContext: Context = container.appContext
+    private val debug = container.debug
+
+    init {
+        viewModelScope.launch { debug.settings.collect { s -> _state.update { it.copy(ntfyEnabled = s.ntfyEnabled) } } }
+    }
     private val shell = ShizukuGateway.get(appContext)
     private val snoop = SnoopController(appContext, shell, container.bluetoothManager.adapter)
 
@@ -241,6 +250,37 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** Puts the capability facts, diagnostics dump and recent debug log on the clipboard. */
+    fun copyDiagnostics() {
+        viewModelScope.launch {
+            val c = _state.value.capabilities
+            val text = buildString {
+                append("BlueShark ").append(dev.nphil.blueshark.BuildConfig.VERSION_NAME).append('\n')
+                append("effective snoop mode: ").append(c.effectiveSnoopMode.ifBlank { "(unset)" }).append('\n')
+                append("service setting at enable: ").append(c.serviceSnoopSetting.ifBlank { "-" }).append('\n')
+                append("stack reports: ").append(c.stackSnoopLog.ifBlank { "-" }).append('\n')
+                append("btsnooplogmode property: ").append(c.snoopMode.ifBlank { "(unset)" }).append('\n')
+                append("shell: ").append(c.shellIdentity).append('\n')
+                append("log dir: ").append(c.logDirectory).append('\n')
+                append("bugreportz: ").append(c.bugreportz).append('\n')
+                append('\n').append(c.diagnostics).append('\n')
+                append("## debug log\n").append(debug.snapshot())
+            }
+            val clipboard = appContext.getSystemService(ClipboardManager::class.java)
+            clipboard.setPrimaryClip(ClipData.newPlainText("BlueShark diagnostics", text))
+            report("Diagnostics copied (${text.length} chars)")
+        }
+    }
+
+    /** Publishes the same text to the ntfy topic configured in Settings, right now. */
+    fun sendDiagnostics() {
+        viewModelScope.launch {
+            val c = _state.value.capabilities
+            val body = ("effective=${c.effectiveSnoopMode.ifBlank { "(unset)" }} service=${c.serviceSnoopSetting} stack=${c.stackSnoopLog}\n" + c.diagnostics)
+            report(debug.sendNow("BlueShark diagnostics", body.take(3_800)))
+        }
+    }
+
     fun openShizukuDownload() = openUrl("https://shizuku.rikka.app/download/")
 
     /**
@@ -267,6 +307,12 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
         _state.update { it.copy(probing = true) }
         viewModelScope.launch {
             val capabilities = snoop.probe()
+            debug.log(
+                "probe",
+                "effective=${capabilities.effectiveSnoopMode.ifBlank { "(unset)" }} service=${capabilities.serviceSnoopSetting.ifBlank { "-" }} " +
+                    "stack=${capabilities.stackSnoopLog.ifBlank { "-" }} prop=${capabilities.snoopMode.ifBlank { "-" }} " +
+                    "bugreportz=${capabilities.bugreportz} logdir=${capabilities.logDirectory.take(80)}",
+            )
             _state.update { current ->
                 current.copy(
                     probing = false,
@@ -287,6 +333,7 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
         label = if (mode == SnoopMode.FULL) "Enabling full HCI logging" else "Disabling HCI logging",
     ) {
         val result = snoop.setSnoopMode(mode)
+        debug.log("setprop", result.detail)
         val step = if (mode == SnoopMode.FULL) CaptureStep.LOGGING else CaptureStep.CLEANUP
         _state.update { current ->
             current.copy(
@@ -307,18 +354,35 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
 
     fun restartBluetooth() = runExclusive("Restarting Bluetooth") {
         val result = snoop.restartBluetooth()
+        debug.log("restart", (result.steps + listOfNotNull(result.error)).joinToString(" | "))
+        // The service re-reads the snoop setting on enable, so the probe only means something now.
+        val capabilities = if (result.ok) snoop.probe() else null
+        capabilities?.let {
+            debug.log("probe", "after restart: effective=${it.effectiveSnoopMode.ifBlank { "(unset)" }} service=${it.serviceSnoopSetting.ifBlank { "-" }}")
+        }
         _state.update { current ->
             current.copy(
-                restartSteps = result.steps,
-                completed = if (result.ok) {
-                    current.completed + CaptureStep.RESTART
-                } else {
-                    current.completed - CaptureStep.RESTART
+                capabilities = capabilities ?: current.capabilities,
+                completed = run {
+                    val afterRestart = if (result.ok) current.completed + CaptureStep.RESTART else current.completed - CaptureStep.RESTART
+                    when {
+                        capabilities == null -> afterRestart
+                        capabilities.snoopModeIsFull -> afterRestart + CaptureStep.LOGGING
+                        else -> afterRestart - CaptureStep.LOGGING
+                    }
                 },
+                snoopDenied = current.snoopDenied && capabilities?.snoopModeIsFull != true,
+                restartSteps = result.steps,
                 error = result.error ?: current.error,
             )
         }
-        report(if (result.ok) "Bluetooth restarted" else result.error ?: "Bluetooth restart failed")
+        report(
+            when {
+                !result.ok -> result.error ?: "Bluetooth restart failed"
+                capabilities?.snoopModeIsFull == true -> "Bluetooth restarted; service reports snoop mode ${capabilities.effectiveSnoopMode}"
+                else -> "Bluetooth restarted; snoop mode is ${capabilities?.effectiveSnoopMode?.ifBlank { "(unset)" }}: check Developer options"
+            },
+        )
     }
 
     fun loadApps() {

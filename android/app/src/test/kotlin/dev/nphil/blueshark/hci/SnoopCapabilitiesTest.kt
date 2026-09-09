@@ -71,4 +71,25 @@ class SnoopCapabilitiesTest {
             snoopPropertyLines(getprop),
         )
     }
+
+    @Test
+    fun `service setting from dumpsys beats stack and property views`() {
+        val dump = """
+            [ ]: snoop_logger_tracing
+            sSnoopLogSettingAtEnable = FULL
+            sDefaultSnoopLogSettingAtEnable = null
+        """.trimIndent()
+        assertEquals("FULL", serviceSnoopSetting(dump))
+        assertEquals("", serviceSnoopSetting("nothing here"))
+
+        val caps = SnoopCapabilities(
+            snoopMode = "",
+            serviceSnoopSetting = serviceSnoopSetting(dump),
+            stackSnoopLog = "Snoop Logs disabled",
+        )
+        assertEquals("full", caps.effectiveSnoopMode)
+        assertTrue(caps.snoopModeIsFull)
+        // An unknown token (e.g. "empty") must not mask the other signals.
+        assertEquals("disabled", caps.copy(serviceSnoopSetting = "empty").effectiveSnoopMode)
+    }
 }

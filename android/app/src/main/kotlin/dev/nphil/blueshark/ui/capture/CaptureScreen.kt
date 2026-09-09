@@ -29,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.OpenInNew
@@ -208,10 +209,10 @@ private fun LazyListScope.captureSteps(
     item(key = "step-logging") {
         StepCard(1, CaptureStep.LOGGING, state) {
             Text(
-                text = "Only \"full\" keeps whole ACL payloads. \"filtered\" truncates exactly the vendor bytes you are after. " +
-                    "Without root only Settings may change this: Developer options > \"Enable Bluetooth HCI snoop log\" > " +
-                    "Enabled (not \"Enabled Filtered\"). The stack reads the setting only when it starts, so run step 2 " +
-                    "afterwards; the step turns green once the stack itself reports full mode.",
+                text = "Developer options > \"Enable Bluetooth HCI snoop log\" > Enabled (not \"Enabled Filtered\": that " +
+                    "strips the vendor bytes you are after). The Bluetooth service reads the setting only when the " +
+                    "adapter starts, so step 2 comes next and verifies this one: it turns green when the service " +
+                    "reports FULL after the restart. Without root nothing but Settings can change the mode.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -409,6 +410,11 @@ private fun CapabilityCard(state: CaptureUiState, viewModel: CaptureViewModel) {
                     },
                 )
                 FactRow(
+                    label = "Service setting at enable",
+                    value = capabilities.serviceSnoopSetting.ifBlank { "(no sSnoopLogSettingAtEnable line in dumpsys)" },
+                    mono = true,
+                )
+                FactRow(
                     label = "Stack reports",
                     value = capabilities.stackSnoopLog.ifBlank { "(no \"Snoop Logs\" line in logcat yet; restart Bluetooth in step 2, then re-probe)" },
                     mono = true,
@@ -423,6 +429,16 @@ private fun CapabilityCard(state: CaptureUiState, viewModel: CaptureViewModel) {
                 FactRow("dumpsys bluetooth_manager", if (capabilities.bluetoothManagerDumpsys) "available" else "not available")
                 FactRow("bugreportz", capabilities.bugreportz ?: "not available", mono = true)
                 capabilities.error?.let { FactRow("Probe error", it, tint = MaterialTheme.colorScheme.error) }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(onClick = viewModel::copyDiagnostics) {
+                        Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Copy diagnostics")
+                    }
+                    if (state.ntfyEnabled) {
+                        OutlinedButton(onClick = viewModel::sendDiagnostics) { Text("Send to ntfy") }
+                    }
+                }
                 if (capabilities.diagnostics.isNotBlank()) {
                     var showDiagnostics by remember { mutableStateOf(false) }
                     TextButton(onClick = { showDiagnostics = !showDiagnostics }) {
