@@ -26,12 +26,14 @@ import androidx.compose.ui.unit.dp
 import dev.nphil.blestudio.export.EligibilityReport
 import dev.nphil.blestudio.export.ExcludedCommand
 import dev.nphil.blestudio.export.HaProfileBuilder
+import dev.nphil.blestudio.model.CaptureSession
 import dev.nphil.blestudio.model.HaCommand
 import dev.nphil.blestudio.ui.theme.MonoFamily
 
 @Composable
 internal fun ExportTab(
     state: SessionsUiState,
+    session: CaptureSession,
     viewModel: SessionsViewModel,
     expanded: Boolean,
     modifier: Modifier = Modifier,
@@ -44,6 +46,11 @@ internal fun ExportTab(
                     "Export",
                     "The bundle is the full evidence record; the profile is the small, strict file the " +
                         "Home Assistant integration accepts",
+                )
+                IncludeSecretsRow(
+                    session = session,
+                    checked = state.includeSecretsOnExport,
+                    onCheckedChange = viewModel::setIncludeSecretsOnExport,
                 )
                 if (state.exporting) LinearProgressIndicator(Modifier.fillMaxWidth())
                 val profileReady = !state.exporting && report?.exportable == true

@@ -508,16 +508,18 @@ internal fun mergeAdvertisements(
  * Folds the live link's facts into the stored ones. Live readings win where they exist; lists are
  * merged by identity, because nothing on the screen is cleared once it has been saved.
  *
- * @param mergedReconnects link-setup samples of [live] already written to this session; the GATT
- *   client keeps accumulating them for the lifetime of the screen, so only the tail is new.
+ * @param newSamples link-setup timings [GattClient] has recorded since this session was last
+ *   saved. Only the tail is appended, and only as far as the client's capped list still reaches:
+ *   its size stops growing long before the timings stop arriving, so a count of arrivals is the
+ *   only thing that says what is new.
  */
-internal fun mergeLiveFacts(base: ConnectionFacts, live: ConnectionFacts, mergedReconnects: Int) = base.copy(
+internal fun mergeLiveFacts(base: ConnectionFacts, live: ConnectionFacts, newSamples: Int) = base.copy(
     negotiatedMtu = live.negotiatedMtu ?: base.negotiatedMtu,
     txPhy = live.txPhy ?: base.txPhy,
     rxPhy = live.rxPhy ?: base.rxPhy,
     pairingRequired = live.pairingRequired ?: base.pairingRequired,
     reconnectSamplesMs = base.reconnectSamplesMs +
-        live.reconnectSamplesMs.drop(mergedReconnects.coerceAtMost(live.reconnectSamplesMs.size)),
+        live.reconnectSamplesMs.takeLast(newSamples.coerceIn(0, live.reconnectSamplesMs.size)),
     writeWithoutResponseVerified = base.writeWithoutResponseVerified || live.writeWithoutResponseVerified,
     maxObservedResponseMs = maxOf(base.maxObservedResponseMs ?: 0L, live.maxObservedResponseMs ?: 0L)
         .takeIf { it > 0L },

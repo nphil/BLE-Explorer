@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.nphil.blestudio.crypto.DecryptCache
 import dev.nphil.blestudio.export.ByteDiff
 import dev.nphil.blestudio.export.CommandAnalyzer
 import dev.nphil.blestudio.export.HaProfileBuilder
@@ -44,6 +45,7 @@ private val ROW_LABEL_WIDTH = 96.dp
 internal fun CompareTab(
     state: SessionsUiState,
     viewModel: SessionsViewModel,
+    decrypt: DecryptCache?,
     expanded: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -52,6 +54,14 @@ internal fun CompareTab(
             title = "Compare payloads",
             subtitle = "Pick one attribute, then 2–6 payloads; columns that move between them are highlighted",
         )
+        if (decrypt != null && !decrypt.empty) {
+            SwitchRow(
+                label = "Use decrypted payloads",
+                checked = state.compareDecrypted,
+                onCheckedChange = viewModel::setCompareDecrypted,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+        }
         if (state.facets.channels.isEmpty()) {
             EmptyHint(
                 title = "Nothing to compare",
@@ -81,17 +91,29 @@ internal fun CompareTab(
             )
             return@Column
         }
+        // Diffing the plaintext is the point of decryption: on the wire, an AEAD frame differs in
+        // every byte, so the ciphertext grid says nothing about which byte carries the parameter.
+        val payloads = remember(state.compareSelection, state.compareDecrypted, decrypt) {
+            state.compareSelection.map { event ->
+                val bytes = if (state.compareDecrypted && decrypt != null) {
+                    decrypt.payloadFor(event)
+                } else {
+                    event.payloadHex
+                }
+                HaProfileBuilder.normalizeHex(bytes).orEmpty()
+            }
+        }
         if (expanded) {
             Row(Modifier.weight(1f).fillMaxWidth()) {
-                CandidateList(state, viewModel, Modifier.weight(1f).fillMaxHeight())
+                CandidateList(state, viewModel, decrypt, Modifier.weight(1f).fillMaxHeight())
                 VerticalDivider()
-                DiffPanel(state, viewModel, Modifier.weight(1.6f).fillMaxHeight())
+                DiffPanel(state, viewModel, payloads, Modifier.weight(1.6f).fillMaxHeight())
             }
         } else {
             Column(Modifier.weight(1f).fillMaxWidth()) {
-                CandidateList(state, viewModel, Modifier.fillMaxWidth().heightIn(max = 260.dp))
+                CandidateList(state, viewModel, decrypt, Modifier.fillMaxWidth().heightIn(max = 260.dp))
                 HorizontalDivider()
-                DiffPanel(state, viewModel, Modifier.weight(1f).fillMaxWidth())
+                DiffPanel(state, viewModel, payloads, Modifier.weight(1f).fillMaxWidth())
             }
         }
     }
@@ -101,6 +123,7 @@ internal fun CompareTab(
 private fun CandidateList(
     state: SessionsUiState,
     viewModel: SessionsViewModel,
+    decrypt: DecryptCache?,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(modifier, contentPadding = PaddingValues(bottom = 16.dp)) {
@@ -137,8 +160,13 @@ private fun CandidateList(
                         fontFamily = MonoFamily,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    val shown = if (state.compareDecrypted && decrypt != null) {
+                        decrypt.payloadFor(event)
+                    } else {
+                        event.payloadHex
+                    }
                     Text(
-                        hexGrouped(event.payloadHex, 12).ifEmpty { "(no payload)" },
+                        hexGrouped(shown, 12).ifEmpty { "(no payload)" },
                         style = MaterialTheme.typography.bodySmall,
                         fontFamily = MonoFamily,
                         maxLines = 1,
@@ -160,6 +188,7 @@ private fun CandidateList(
 private fun DiffPanel(
     state: SessionsUiState,
     viewModel: SessionsViewModel,
+    payloads: List<String>,
     modifier: Modifier = Modifier,
 ) {
     val selection = state.compareSelection
@@ -170,9 +199,6 @@ private fun DiffPanel(
             body = "Two to six payloads on the same attribute reveal which byte carries the parameter.",
         )
         return
-    }
-    val payloads = remember(selection) {
-        selection.map { event -> HaProfileBuilder.normalizeHex(event.payloadHex).orEmpty() }
     }
     val diff = remember(payloads) { CommandAnalyzer.diff(payloads) }
     val horizontal = rememberScrollState()

@@ -119,6 +119,34 @@ internal fun IntField(
     )
 }
 
+/**
+ * Offset field that accepts a leading `-`, because a byte range measured from the end of the
+ * frame is how every scheme addresses a trailing counter or MIC.
+ */
+@Composable
+internal fun SignedIntField(
+    resetKey: Any?,
+    label: String,
+    value: Int?,
+    onChange: (Int?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var text by remember(resetKey) { mutableStateOf(value?.toString().orEmpty()) }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { raw ->
+            val sign = if (raw.startsWith("-")) "-" else ""
+            val cleaned = sign + raw.filter(Char::isDigit).take(5)
+            text = cleaned
+            onChange(cleaned.toIntOrNull())
+        },
+        label = { Text(label) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        modifier = modifier,
+    )
+}
+
 @Composable
 internal fun EvidenceTextField(
     resetKey: Any?,

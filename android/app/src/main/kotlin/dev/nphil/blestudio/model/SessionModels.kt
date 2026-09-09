@@ -1,5 +1,6 @@
 package dev.nphil.blestudio.model
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.util.UUID
 
@@ -27,6 +28,7 @@ data class CaptureSession(
     val notifications: List<NotificationSpec> = emptyList(),
     val protocol: ProtocolModel = ProtocolModel(),
     val environment: CaptureEnvironment? = null,
+    val ciphers: List<CipherScheme> = emptyList(),
     val notes: String = "",
 )
 
@@ -251,6 +253,139 @@ data class HaCommand(
     val stage: String = "tested",
     val notes: String,
     val synthetic: Boolean = false,
+)
+
+// ---------------------------------------------------------------------------
+// Application-layer decryption
+// ---------------------------------------------------------------------------
+
+/** Symmetric primitive a scheme applies to the ciphertext range of a frame. */
+@Serializable
+enum class CipherPrimitive { AES_ECB, AES_CBC, AES_CTR, AES_GCM, AES_CCM, CHACHA20_POLY1305, XOR }
+
+/** How the operator's entered secret becomes the actual cipher key. */
+@Serializable
+enum class KeyDerivation { RAW, SHA256, MD5, HMAC_SHA256_WITH_SALT, AES_ECB_OF_CONSTANT }
+
+/**
+ * Which way round a scheme feeds bytes through the block cipher.
+ *
+ * [NATURAL] is what every standard says. [REVERSED_BLOCKS] is the convention the Telink-derived
+ * stacks use - the key, every input block and every output block are byte-reversed - and it is
+ * here because a whole family of cheap mesh bulbs is otherwise undecryptable, not because any
+ * specification endorses it.
+ */
+@Serializable
+enum class CipherByteOrder { NATURAL, REVERSED_BLOCKS }
+
+/**
+ * Where a run of bytes comes from when a scheme is applied to one frame.
+ *
+ * A nonce, an IV or an AAD is almost never a constant: real schemes stitch it together from the
+ * device address, a slice of the frame itself and a counter. Modelling that as a composable
+ * source is what makes the engine ecosystem-agnostic - a new vendor scheme is a new
+ * [Composite], not new code.
+ */
+@Serializable
+sealed interface ByteSource {
+    /** Literal bytes the operator typed, e.g. MiBeacon's `0x11` AAD. */
+    @Serializable
+    @SerialName("constant")
+    data class Constant(val hex: String) : ByteSource
+
+    /**
+     * A slice of the frame being decrypted.
+     *
+     * A negative [offset] counts back from the end and [length] of -1 means "to the end", because
+     * real frames put the counter and the MIC at the end and the operator should not have to
+     * recompute offsets per frame length.
+     */
+    @Serializable
+    @SerialName("frame")
+    data class FrameBytes(val offset: Int, val length: Int) : ByteSource
+
+    /** Concatenation, in order. */
+    @Serializable
+    @SerialName("composite")
+    data class Composite(val parts: List<ByteSource>) : ByteSource
+
+    /** The device address, least-significant byte first - the order MiBeacon nonces use. */
+    @Serializable
+    @SerialName("macReversed")
+    data object MacAddressReversed : ByteSource
+
+    /** The device address in printed order. */
+    @Serializable
+    @SerialName("mac")
+    data object MacAddress : ByteSource
+
+    /** A run of [source], so a scheme can take four bytes of a six-byte address. */
+    @Serializable
+    @SerialName("slice")
+    data class Slice(val source: ByteSource, val offset: Int = 0, val length: Int = -1) : ByteSource
+
+    /**
+     * The session counter: how many frames this scheme has matched so far.
+     *
+     * [littleEndian] of null inherits [CipherScheme.counterLittleEndian], so one switch flips
+     * every counter in a scheme while a single source may still disagree.
+     */
+    @Serializable
+    @SerialName("counter")
+    data class Counter(val width: Int = 4, val littleEndian: Boolean? = null) : ByteSource
+}
+
+/**
+ * Which part of the frame is ciphertext.
+ *
+ * @param offset first ciphertext byte; negative counts back from the end.
+ * @param length -1 means "to the end", minus [dropFromEnd].
+ * @param dropFromEnd trailing bytes that are not ciphertext - a counter, a MIC, a checksum.
+ */
+@Serializable
+data class ByteRange(val offset: Int = 0, val length: Int = -1, val dropFromEnd: Int = 0)
+
+/** Which frames a scheme claims. An empty matcher claims every frame with a payload. */
+@Serializable
+data class FrameMatch(
+    val characteristicUuid: String? = null,
+    val direction: EventDirection? = null,
+    val payloadPrefixHex: String? = null,
+    val minLength: Int = 0,
+)
+
+/**
+ * A complete description of one application-layer cipher: enough to decrypt a frame without any
+ * ecosystem-specific code.
+ *
+ * The key lives here because it is per-session evidence like everything else, but it is stripped
+ * from a shared bundle unless the operator opts in - see `ExportService.exportEvidenceBundle`.
+ */
+@Serializable
+data class CipherScheme(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val enabled: Boolean = true,
+    val primitive: CipherPrimitive,
+    val keyHex: String = "",
+    val keyDerivation: KeyDerivation = KeyDerivation.RAW,
+    /** Salt for [KeyDerivation.HMAC_SHA256_WITH_SALT]. */
+    val keySaltHex: String? = null,
+    /** Plaintext block for [KeyDerivation.AES_ECB_OF_CONSTANT]. */
+    val keyConstantHex: String? = null,
+    val nonce: ByteSource = ByteSource.Constant(""),
+    val aad: ByteSource? = null,
+    val tagLength: Int? = null,
+    /** Where the AEAD tag lives when it is not appended to the ciphertext. */
+    val tag: ByteSource? = null,
+    val counterLittleEndian: Boolean = true,
+    val ciphertextRange: ByteRange = ByteRange(),
+    val match: FrameMatch = FrameMatch(),
+    /** PKCS#5/7 padding for CBC; block-aligned NoPadding otherwise. */
+    val padded: Boolean = false,
+    val byteOrder: CipherByteOrder = CipherByteOrder.NATURAL,
+    val presetId: String? = null,
+    val notes: String = "",
 )
 
 fun ByteArray.toHex(): String = joinToString("") { "%02X".format(it) }

@@ -101,20 +101,21 @@ object AesCcm {
         tagLength: Int,
     ): ByteArray {
         val lengthField = 15 - nonce.size
-        val chain = MacChain(ecb)
+        val state = ByteArray(16)
         // B_0: flags = Adata | ((M-2)/2) << 3 | (L-1), then the nonce, then l(m).
-        chain.state[0] = (
+        state[0] = (
             (if (aad.isNotEmpty()) 0x40 else 0) or
                 (((tagLength - 2) / 2) shl 3) or
                 (lengthField - 1)
             ).toByte()
-        nonce.copyInto(chain.state, 1)
+        nonce.copyInto(state, 1)
         var remaining = plaintext.size
         for (index in 0 until lengthField) {
-            chain.state[15 - index] = (remaining and 0xFF).toByte()
+            state[15 - index] = (remaining and 0xFF).toByte()
             remaining = remaining ushr 8
         }
-        chain.seal()
+        ecb.encryptInPlace(state)
+        val chain = MacChain(ecb, state)
         if (aad.isNotEmpty()) {
             // A BLE frame cannot carry 0xFF00 bytes of AAD, so only the short l(a) encoding is
             // reachable; the long one is still written so the code is not quietly wrong.
@@ -131,7 +132,7 @@ object AesCcm {
         }
         chain.absorb(plaintext)
         chain.seal()
-        return chain.state
+        return state
     }
 
     /** CTR over A_1.. , which is CCM encryption and CCM decryption alike. */
@@ -165,7 +166,7 @@ object AesCcm {
     }
 
     /**
-     * One AES key, one `Cipher`, two scratch blocks.
+     * One AES key, one `Cipher`, three scratch blocks.
      *
      * A 20-byte BLE frame needs four permutations; allocating a `Cipher` and a fresh output array
      * per permutation would dominate the cost of decrypting a whole timeline.
@@ -179,19 +180,34 @@ object AesCcm {
         val scratch = ByteArray(16)
         val keystream = ByteArray(16)
 
-        fun encryptInPlace(target: ByteArray) = cipher.doFinal(target, 0, 16, target, 0)
+        /**
+         * Output block for [encryptInPlace].
+         *
+         * Passing one array as both input and output of `doFinal` is in-place operation the JDK
+         * provider accepts, but Conscrypt's buffer-overlap handling is not something this app can
+         * exercise without a device. Copying sixteen bytes back costs nothing next to the AES
+         * rounds themselves, and this is the path every decryption in the app runs through.
+         */
+        private val permuted = ByteArray(16)
 
-        fun encryptInto(source: ByteArray, destination: ByteArray) =
+        fun encryptInPlace(target: ByteArray) {
+            cipher.doFinal(target, 0, 16, permuted, 0)
+            permuted.copyInto(target)
+        }
+
+        fun encryptInto(source: ByteArray, destination: ByteArray) {
             cipher.doFinal(source, 0, 16, destination, 0)
+        }
     }
 
     /**
-     * The CBC-MAC accumulator: bytes XOR into the running block, which is permuted whenever it
-     * fills. [seal] zero-pads and closes a block group, which is what separates B_0, the AAD
-     * blocks and the message blocks.
+     * The CBC-MAC accumulator over an already-permuted [state], i.e. E(B_0).
+     *
+     * Bytes XOR into the running block, which is permuted whenever it fills. [seal] zero-pads and
+     * closes a block group, which is exactly what separates the AAD blocks from the message
+     * blocks in RFC 3610.
      */
-    private class MacChain(private val ecb: Ecb) {
-        val state = ByteArray(16)
+    private class MacChain(private val ecb: Ecb, private val state: ByteArray) {
         private var filled = 0
 
         fun absorb(byte: Byte) {
@@ -207,17 +223,9 @@ object AesCcm {
         }
 
         fun seal() {
-            if (filled != 0 || state.isEmpty()) Unit
-            if (filled != 0) {
-                ecb.encryptInPlace(state)
-                filled = 0
-            } else if (sealedNothing) {
-                ecb.encryptInPlace(state)
-            }
-            sealedNothing = false
+            if (filled == 0) return
+            ecb.encryptInPlace(state)
+            filled = 0
         }
-
-        /** B_0 is a full block written straight into [state]; the first [seal] must permute it. */
-        private var sealedNothing = true
     }
 }

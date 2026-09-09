@@ -47,9 +47,9 @@ class ScanEvidenceMergeTest {
     @Test
     fun `a saved connect attempt is not stored twice`() {
         val live = ConnectionFacts(connectAttempts = listOf(attempt(1_000), attempt(2_000, success = false)))
-        val first = mergeLiveFacts(ConnectionFacts(), live, mergedReconnects = 0)
+        val first = mergeLiveFacts(ConnectionFacts(), live, newSamples = 0)
 
-        val second = mergeLiveFacts(first, live, mergedReconnects = 0)
+        val second = mergeLiveFacts(first, live, newSamples = 0)
 
         assertEquals(listOf(1_000L, 2_000L), second.connectAttempts.map { it.startedEpochMs })
     }
@@ -59,14 +59,14 @@ class ScanEvidenceMergeTest {
         val afterFirstSave = mergeLiveFacts(
             base = ConnectionFacts(),
             live = ConnectionFacts(reconnectSamplesMs = listOf(310L, 290L)),
-            mergedReconnects = 0,
+            newSamples = 2,
         )
 
         // Two more connects happened; the live list still carries the first two.
         val afterSecondSave = mergeLiveFacts(
             base = afterFirstSave,
             live = ConnectionFacts(reconnectSamplesMs = listOf(310L, 290L, 640L, 305L)),
-            mergedReconnects = 2,
+            newSamples = 2,
         )
 
         assertEquals(listOf(310L, 290L), afterFirstSave.reconnectSamplesMs)
@@ -74,11 +74,35 @@ class ScanEvidenceMergeTest {
     }
 
     @Test
-    fun `a live list shorter than the mark cannot slice out stored samples`() {
-        val base = ConnectionFacts(reconnectSamplesMs = listOf(310L))
+    fun `a saturated live list still yields its newest timings`() {
+        // GattClient caps reconnectSamplesMs and drops from the front, so once it saturates the
+        // list stops growing while connects keep happening. An offset into it would append nothing
+        // ever again; the arrival count is what makes the new timings visible.
+        val cap = 20
+        val stored = ConnectionFacts(reconnectSamplesMs = (1..cap).map { it.toLong() })
+        val live = ConnectionFacts(reconnectSamplesMs = (3..cap + 2).map { it.toLong() })
 
-        // The GATT client was replaced (screen recreated), so its list starts over.
-        val merged = mergeLiveFacts(base, ConnectionFacts(reconnectSamplesMs = emptyList()), mergedReconnects = 4)
+        val merged = mergeLiveFacts(stored, live, newSamples = 2)
+
+        assertEquals(cap + 2, merged.reconnectSamplesMs.size)
+        assertEquals(listOf((cap + 1).toLong(), (cap + 2).toLong()), merged.reconnectSamplesMs.takeLast(2))
+    }
+
+    @Test
+    fun `nothing new means nothing appended`() {
+        val stored = ConnectionFacts(reconnectSamplesMs = listOf(310L))
+
+        val merged = mergeLiveFacts(stored, ConnectionFacts(reconnectSamplesMs = listOf(310L)), newSamples = 0)
+
+        assertEquals(listOf(310L), merged.reconnectSamplesMs)
+    }
+
+    @Test
+    fun `a live list shorter than the count cannot invent timings`() {
+        val stored = ConnectionFacts(reconnectSamplesMs = listOf(310L))
+
+        // The client was replaced (screen recreated): its list and its count start over.
+        val merged = mergeLiveFacts(stored, ConnectionFacts(reconnectSamplesMs = emptyList()), newSamples = 4)
 
         assertEquals(listOf(310L), merged.reconnectSamplesMs)
     }

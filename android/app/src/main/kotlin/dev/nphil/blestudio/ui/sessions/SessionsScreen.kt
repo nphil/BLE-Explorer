@@ -68,6 +68,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import dev.nphil.blestudio.AppContainer
+import dev.nphil.blestudio.crypto.DecryptCache
 import dev.nphil.blestudio.model.CaptureSession
 import dev.nphil.blestudio.ui.theme.MonoFamily
 
@@ -111,12 +112,16 @@ fun SessionsScreen(
         }
     }
 
+    // One cache per (session, schemes, events): every pane reads the same memoised decryption,
+    // and editing a scheme re-indexes once rather than once per pane.
+    val decrypt = rememberDecryptCache(state.selected)
+
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { insets ->
         Box(Modifier.padding(insets).fillMaxSize()) {
             if (expanded) {
-                SessionsTwoPane(state, viewModel)
+                SessionsTwoPane(state, viewModel, decrypt)
             } else {
-                SessionsSinglePane(state, viewModel)
+                SessionsSinglePane(state, viewModel, decrypt)
             }
         }
     }
@@ -126,15 +131,32 @@ fun SessionsScreen(
         EventInspectorSheet(
             event = event,
             session = state.selected,
+            decrypted = decrypt?.takeIf { state.applyDecryption }?.frameFor(event),
             onDismiss = { viewModel.inspect(null) },
             onCreateCommand = { viewModel.createCommandFromEvent(event) },
         )
     }
 }
 
+/**
+ * The session's decrypted view, rebuilt only when the schemes or the traffic change.
+ *
+ * Indexing is a metadata pass over the events; the ciphers themselves run lazily per row, so this
+ * stays cheap even while the operator is typing a nonce offset.
+ */
+@Composable
+private fun rememberDecryptCache(session: CaptureSession?): DecryptCache? =
+    remember(session?.id, session?.ciphers, session?.events) {
+        session?.let { DecryptCache(it, it.ciphers, it.events) }
+    }
+
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
 @Composable
-private fun SessionsTwoPane(state: SessionsUiState, viewModel: SessionsViewModel) {
+private fun SessionsTwoPane(
+    state: SessionsUiState,
+    viewModel: SessionsViewModel,
+    decrypt: DecryptCache?,
+) {
     val navigator = rememberListDetailPaneScaffoldNavigator<String>()
     val selectedId = state.selected?.id
     LaunchedEffect(selectedId) {
@@ -152,14 +174,25 @@ private fun SessionsTwoPane(state: SessionsUiState, viewModel: SessionsViewModel
         },
         detailPane = {
             AnimatedPane {
-                SessionDetailPane(state, viewModel, expanded = true, onBack = null, modifier = Modifier.fillMaxSize())
+                SessionDetailPane(
+                    state = state,
+                    viewModel = viewModel,
+                    decrypt = decrypt,
+                    expanded = true,
+                    onBack = null,
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
         },
     )
 }
 
 @Composable
-private fun SessionsSinglePane(state: SessionsUiState, viewModel: SessionsViewModel) {
+private fun SessionsSinglePane(
+    state: SessionsUiState,
+    viewModel: SessionsViewModel,
+    decrypt: DecryptCache?,
+) {
     val session = state.selected
     BackHandler(enabled = session != null) { viewModel.select(null) }
     if (session == null) {
@@ -168,6 +201,7 @@ private fun SessionsSinglePane(state: SessionsUiState, viewModel: SessionsViewMo
         SessionDetailPane(
             state = state,
             viewModel = viewModel,
+            decrypt = decrypt,
             expanded = false,
             onBack = { viewModel.select(null) },
             modifier = Modifier.fillMaxSize(),
@@ -305,6 +339,7 @@ private fun SessionCard(
 private fun SessionDetailPane(
     state: SessionsUiState,
     viewModel: SessionsViewModel,
+    decrypt: DecryptCache?,
     expanded: Boolean,
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
@@ -319,6 +354,9 @@ private fun SessionDetailPane(
         }
         return
     }
+    // The screen already built this for the selected session; the fallback only exists because the
+    // parameter has to be nullable for the "nothing selected" pane above.
+    val cache = decrypt ?: rememberDecryptCache(session)!!
     Column(modifier) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 4.dp),
@@ -385,6 +423,7 @@ private fun SessionDetailPane(
             SessionTab.TIMELINE -> TimelineTab(
                 state = state,
                 session = session,
+                decrypt = cache.takeIf { state.applyDecryption },
                 expanded = expanded,
                 onFilter = viewModel::updateFilter,
                 onClearFilter = viewModel::clearFilter,
@@ -403,6 +442,16 @@ private fun SessionDetailPane(
             SessionTab.COMPARE -> CompareTab(
                 state = state,
                 viewModel = viewModel,
+                decrypt = cache,
+                expanded = expanded,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+            )
+
+            SessionTab.DECRYPT -> DecryptTab(
+                state = state,
+                session = session,
+                viewModel = viewModel,
+                cache = cache,
                 expanded = expanded,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
             )
@@ -416,6 +465,7 @@ private fun SessionDetailPane(
 
             SessionTab.EXPORT -> ExportTab(
                 state = state,
+                session = session,
                 viewModel = viewModel,
                 expanded = expanded,
                 modifier = Modifier.weight(1f).fillMaxWidth(),

@@ -11,13 +11,18 @@ import dev.nphil.blestudio.export.ExportService
 import dev.nphil.blestudio.export.HaProfileBuilder
 import dev.nphil.blestudio.export.ProfileNotExportableException
 import dev.nphil.blestudio.export.SuggestedCommand
+import dev.nphil.blestudio.crypto.CipherPreset
+import dev.nphil.blestudio.crypto.HandshakeRule
+import dev.nphil.blestudio.crypto.KeyTools
 import dev.nphil.blestudio.model.AttOperation
 import dev.nphil.blestudio.model.BleEvent
 import dev.nphil.blestudio.model.CaptureSession
+import dev.nphil.blestudio.model.CipherScheme
 import dev.nphil.blestudio.model.CommandSpec
 import dev.nphil.blestudio.model.ConnectionFacts
 import dev.nphil.blestudio.model.EventDirection
 import dev.nphil.blestudio.model.EvidenceStage
+import dev.nphil.blestudio.model.KeyDerivation
 import dev.nphil.blestudio.model.ProtocolModel
 import dev.nphil.blestudio.model.WriteType
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +37,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
@@ -39,6 +45,7 @@ enum class SessionTab(val label: String) {
     TIMELINE("Timeline"),
     COMMANDS("Commands"),
     COMPARE("Compare"),
+    DECRYPT("Decrypt"),
     DEVICE("Device"),
     EXPORT("Export"),
 }
@@ -94,6 +101,12 @@ data class SessionsUiState(
     val renameTarget: SessionSummary? = null,
     val creating: Boolean = false,
     val exporting: Boolean = false,
+    /** Decryption is a view, so which views it reaches is UI state and is never persisted. */
+    val applyDecryption: Boolean = true,
+    val compareDecrypted: Boolean = false,
+    val includeSecretsOnExport: Boolean = false,
+    val editingCipherId: String? = null,
+    val tryEventId: String? = null,
 )
 
 sealed interface SessionEffect {
@@ -211,6 +224,8 @@ class SessionsViewModel(private val container: AppContainer) : ViewModel() {
                     compareChannel = null,
                     compareCandidates = emptyList(),
                     compareSelection = emptyList(),
+                    editingCipherId = null,
+                    tryEventId = null,
                 )
             }
             derive(session)
@@ -429,6 +444,94 @@ class SessionsViewModel(private val container: AppContainer) : ViewModel() {
         mutate { session -> session.copy(commands = session.commands.filterNot { it.id == commandId }) }
     }
 
+    // -- Application-layer decryption ---------------------------------------------------------
+
+    /**
+     * Adds [preset]'s template as a new scheme and opens it for editing.
+     *
+     * The template carries no key on purpose: a preset describes a scheme, and the secret is the
+     * one thing the operator has to bring.
+     */
+    fun addCipherFromPreset(preset: CipherPreset) {
+        val scheme = preset.template.copy(id = UUID.randomUUID().toString())
+        mutate { session ->
+            session.copy(ciphers = session.ciphers + scheme.copy(name = uniqueCipherName(session, scheme.name)))
+        }
+        _state.update { it.copy(tab = SessionTab.DECRYPT, editingCipherId = scheme.id, tryEventId = null) }
+    }
+
+    fun editCipher(schemeId: String?) =
+        _state.update { it.copy(editingCipherId = schemeId, tryEventId = null) }
+
+    fun updateCipher(schemeId: String, transform: (CipherScheme) -> CipherScheme) {
+        mutate { session ->
+            session.copy(ciphers = session.ciphers.map { if (it.id == schemeId) transform(it) else it })
+        }
+    }
+
+    fun setCipherEnabled(schemeId: String, enabled: Boolean) =
+        updateCipher(schemeId) { it.copy(enabled = enabled) }
+
+    fun deleteCipher(schemeId: String) {
+        mutate { session -> session.copy(ciphers = session.ciphers.filterNot { it.id == schemeId }) }
+        _state.update { if (it.editingCipherId == schemeId) it.copy(editingCipherId = null) else it }
+    }
+
+    /** Duplicates a scheme, key included: the usual reason to duplicate is to vary one field. */
+    fun duplicateCipher(schemeId: String) {
+        val source = _state.value.selected?.ciphers?.firstOrNull { it.id == schemeId } ?: return
+        val copy = source.copy(id = UUID.randomUUID().toString())
+        mutate { session ->
+            session.copy(ciphers = session.ciphers + copy.copy(name = uniqueCipherName(session, source.name)))
+        }
+        _state.update { it.copy(editingCipherId = copy.id, tryEventId = null) }
+    }
+
+    /**
+     * Derives a scheme's key from two captured frames and stores the result raw.
+     *
+     * The derivation is recorded in the scheme's notes rather than kept live: re-deriving on every
+     * decrypt would tie the key to frames the operator may later delete, and the session key is
+     * the same for the whole capture anyway.
+     */
+    fun deriveCipherKey(schemeId: String, rule: HandshakeRule) {
+        val session = _state.value.selected ?: return
+        KeyTools.deriveFromHandshake(session.events, rule)
+            .onSuccess { keyHex ->
+                updateCipher(schemeId) { scheme ->
+                    scheme.copy(
+                        keyHex = keyHex,
+                        keyDerivation = KeyDerivation.RAW,
+                        keySaltHex = null,
+                        keyConstantHex = null,
+                        notes = appendDerivationNote(scheme.notes, rule),
+                    )
+                }
+                notice("Derived a ${keyHex.length / 2}-byte key from the handshake")
+            }
+            .onFailure { notice("Could not derive a key: ${it.message}") }
+    }
+
+    fun setApplyDecryption(apply: Boolean) = _state.update { it.copy(applyDecryption = apply) }
+
+    fun setCompareDecrypted(useDecrypted: Boolean) =
+        _state.update { it.copy(compareDecrypted = useDecrypted) }
+
+    fun setTryEvent(eventId: String?) = _state.update { it.copy(tryEventId = eventId) }
+
+    private fun uniqueCipherName(session: CaptureSession, base: String): String {
+        if (session.ciphers.none { it.name == base }) return base
+        var suffix = 2
+        while (session.ciphers.any { it.name == "$base ($suffix)" }) suffix++
+        return "$base ($suffix)"
+    }
+
+    private fun appendDerivationNote(notes: String, rule: HandshakeRule): String {
+        val recipe = rule.parts.joinToString(" + ") { it.label }
+        val line = "Key derived from the handshake: ${rule.derivation.name}($recipe)."
+        return if (notes.isBlank()) line else "$notes\n$line"
+    }
+
     fun updateConnection(transform: (ConnectionFacts) -> ConnectionFacts) =
         mutate { it.copy(connection = transform(it.connection)) }
 
@@ -442,11 +545,15 @@ class SessionsViewModel(private val container: AppContainer) : ViewModel() {
 
     fun updateSessionNotes(notes: String) = mutate { it.copy(notes = notes) }
 
+    fun setIncludeSecretsOnExport(include: Boolean) =
+        _state.update { it.copy(includeSecretsOnExport = include) }
+
     fun shareEvidenceBundle() {
         val session = _state.value.selected ?: return
+        val includeSecrets = _state.value.includeSecretsOnExport
         viewModelScope.launch {
             _state.update { it.copy(exporting = true) }
-            runCatching { exports.exportEvidenceBundle(session) }
+            runCatching { exports.exportEvidenceBundle(session, includeSecrets) }
                 .onSuccess { export ->
                     _effects.emit(SessionEffect.Share(exports.shareIntent(export)))
                 }

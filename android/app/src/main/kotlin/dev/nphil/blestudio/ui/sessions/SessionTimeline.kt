@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -45,6 +46,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.nphil.blestudio.crypto.DecryptCache
+import dev.nphil.blestudio.crypto.DecryptedFrame
 import dev.nphil.blestudio.model.BleEvent
 import dev.nphil.blestudio.model.CaptureSession
 import dev.nphil.blestudio.model.EventDirection
@@ -60,6 +63,7 @@ private val WIDE_NUMBER_WIDTH = 72.dp
 internal fun TimelineTab(
     state: SessionsUiState,
     session: CaptureSession,
+    decrypt: DecryptCache?,
     expanded: Boolean,
     onFilter: (TimelineFilter) -> Unit,
     onClearFilter: () -> Unit,
@@ -145,6 +149,8 @@ internal fun TimelineTab(
                 TimelineRow(
                     event = event,
                     relativeToMicros = first,
+                    // Decryption happens here, for the row about to be drawn, and is memoised.
+                    decrypted = decrypt?.frameFor(event),
                     expanded = expanded,
                     marked = event.markerId != null,
                     onClick = { onInspect(event) },
@@ -237,6 +243,7 @@ private fun ChipRow(
 private fun TimelineRow(
     event: BleEvent,
     relativeToMicros: Long,
+    decrypted: DecryptedFrame?,
     expanded: Boolean,
     marked: Boolean,
     onClick: () -> Unit,
@@ -314,6 +321,44 @@ private fun TimelineRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            // The ciphertext above stays: it is the evidence, this is only a reading of it.
+            decrypted?.result?.plaintextHex?.let { plaintext ->
+                DecryptedLine(plaintext, decrypted, previewBytes)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DecryptedLine(plaintextHex: String, frame: DecryptedFrame, previewBytes: Int) {
+    Row(
+        modifier = Modifier.padding(top = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            Icons.Default.LockOpen,
+            contentDescription = "Decrypted by \"${frame.schemeName}\"",
+            modifier = Modifier.size(12.dp),
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                hexGrouped(plaintextHex, previewBytes),
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = MonoFamily,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                asciiOf(plaintextHex, previewBytes) + "   " + frame.schemeName,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = MonoFamily,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -323,6 +368,7 @@ private fun TimelineRow(
 internal fun EventInspectorSheet(
     event: BleEvent,
     session: CaptureSession?,
+    decrypted: DecryptedFrame?,
     onDismiss: () -> Unit,
     onCreateCommand: () -> Unit,
 ) {
@@ -343,6 +389,7 @@ internal fun EventInspectorSheet(
             marker?.let { InspectorFact("Marker", it.label) }
             if (event.note.isNotBlank()) InspectorFact("Note", event.note)
             InspectorFact("Length", "${event.payloadHex.length / 2} bytes")
+            decrypted?.let { DecryptedSection(it) }
             Spacer(Modifier.size(12.dp))
             if (rows.isEmpty()) {
                 Text(
@@ -398,6 +445,48 @@ internal fun EventInspectorSheet(
             }
             Spacer(Modifier.size(24.dp))
         }
+    }
+}
+
+/**
+ * What a scheme made of this frame, byte-for-byte.
+ *
+ * The nonce and AAD are shown because a scheme that produces noise is otherwise undebuggable, and
+ * the tag verdict is shown honestly: an unauthenticated primitive says so rather than implying
+ * the key was proved right.
+ */
+@Composable
+private fun DecryptedSection(frame: DecryptedFrame) {
+    val result = frame.result
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Default.LockOpen,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = if (result.decrypted) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.error
+                },
+            )
+            Text(
+                "  Decrypted",
+                style = MaterialTheme.typography.titleSmall,
+            )
+        }
+        InspectorFact("Scheme", frame.schemeName)
+        InspectorFact("Nonce / IV", result.nonceHex.ifEmpty { "—" })
+        InspectorFact("AAD", result.aadHex.ifEmpty { "—" })
+        InspectorFact("Ciphertext", result.ciphertextHex.ifEmpty { "—" })
+        val plaintext = result.plaintextHex
+        if (plaintext == null) {
+            InspectorFact("Result", result.error ?: "Nothing came out")
+            return@Column
+        }
+        InspectorFact("Verification", verificationLabel(result.verified))
+        InspectorFact("Plaintext", hexGrouped(plaintext))
+        InspectorFact("ASCII", asciiOf(plaintext))
     }
 }
 

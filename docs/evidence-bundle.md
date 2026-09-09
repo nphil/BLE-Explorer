@@ -19,6 +19,7 @@ the Home Assistant integration for a reverse-engineered device. Feed the agent t
 | `session.markers` | The user's labelled moments ("power on") to align with events. |
 | `session.commands` (`CommandSpec[]`) | The command catalogue. **Only `stage == DEVICE_TESTED && !synthetic` may become an entity action.** `HYPOTHESIS`/`OBSERVED` entries are leads, not features. `response` gives the correlation predicate (characteristic + prefix/mask + observed latencies). `parameters` are byte-range hypotheses with observed values. |
 | `session.notifications` (`NotificationSpec[]`) | Inbound state frames with decoding hypotheses → sensors/binary sensors/state feedback. |
+| `session.ciphers` (`CipherScheme[]`) | Application-layer encryption the operator described: primitive, key derivation, nonce/AAD/tag byte sources, ciphertext range and which frames each scheme claims. `keyHex` is **empty unless the operator ticked "Include cipher keys"** at export — the shape travels, the secret does not. Reproduce a scheme with your own key; see `docs/decryption.md`. |
 | `session.protocol` (`ProtocolModel`) | Framing: header bytes, length/sequence/checksum offsets, endianness, handshake command ids, pairing/encryption notes. Treat as hypotheses until the events confirm them. |
 | `session.environment` (`CaptureEnvironment`) | Android version/fingerprint, vendor app package+version, HCI snoop mode. `hciSnoopMode != "full"` means payloads may be truncated: distrust long frames. |
 

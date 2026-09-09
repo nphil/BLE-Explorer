@@ -74,7 +74,7 @@ class BleForegroundService : LifecycleService() {
         val mode = intent?.getStringExtra(EXTRA_MODE)
         if (mode != null) modes += mode
         if (mode == MODE_GATT) {
-            intent.getStringExtra(EXTRA_ADDRESS)?.let { gattAddress = it }
+            intent?.getStringExtra(EXTRA_ADDRESS)?.let { gattAddress = it }
         }
         if (modes.isEmpty()) {
             // Nothing asked for a link; refuse to sit in the foreground for no reason.

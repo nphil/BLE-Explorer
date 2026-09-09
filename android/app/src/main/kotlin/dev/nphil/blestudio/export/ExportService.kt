@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import androidx.core.content.FileProvider
 import dev.nphil.blestudio.BuildConfig
+import dev.nphil.blestudio.crypto.SecretRedaction
 import dev.nphil.blestudio.data.SessionStore
 import dev.nphil.blestudio.model.CaptureSession
 import dev.nphil.blestudio.model.EvidenceBundle
@@ -48,9 +49,21 @@ class ExportService(context: Context, private val sessions: SessionStore) {
     /** Android 13+ shows its own clipboard confirmation; duplicating it is noise. */
     val showsSystemClipboardConfirmation: Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
 
-    /** Full-fidelity evidence: exactly what is on disk, plus the app version that captured it. */
-    suspend fun exportEvidenceBundle(session: CaptureSession): Export = withContext(Dispatchers.IO) {
-        val bundle = EvidenceBundle(appVersion = BuildConfig.VERSION_NAME, session = session)
+    /**
+     * Full-fidelity evidence: what is on disk, plus the app version that captured it.
+     *
+     * @param includeSecrets when false - the default - every [dev.nphil.blestudio.model.CipherScheme]
+     *   loses its key, salt and constant while keeping its shape, so the bundle can be mailed to
+     *   whoever is writing the integration without handing them the operator's credential for
+     *   someone else's device. The recipient sees the scheme is AES-CCM with this nonce layout and
+     *   supplies their own key.
+     */
+    suspend fun exportEvidenceBundle(
+        session: CaptureSession,
+        includeSecrets: Boolean = false,
+    ): Export = withContext(Dispatchers.IO) {
+        val shared = if (includeSecrets) session else SecretRedaction.redact(session)
+        val bundle = EvidenceBundle(appVersion = BuildConfig.VERSION_NAME, session = shared)
         write(session, ExportKind.EVIDENCE, sessions.json.encodeToString(bundle))
     }
 

@@ -1,5 +1,7 @@
 package dev.nphil.blestudio.hci
 
+import dev.nphil.blestudio.model.AttOperation
+import dev.nphil.blestudio.model.EventDirection
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
@@ -61,6 +63,47 @@ class BtsnoopEventIdTest {
         assertEquals(events[0].timestampEpochMicros, events[1].timestampEpochMicros)
         assertEquals(events[0].payloadHex, events[1].payloadHex)
         assertNotEquals(events[0].id, events[1].id)
+    }
+
+    /** Every kind of record the parser emits an event for, in one capture. */
+    private fun mixedCapture(): ByteArray = CaptureBuilder()
+        .packet(Fixtures.leCreateConnection())
+        .packet(Fixtures.commandStatus(0x200D, status = 0x00), sentByHost = false)
+        .packet(Fixtures.connectionComplete(0x0040), sentByHost = false)
+        .packet(Fixtures.att(0x0040, Fixtures.exchangeMtuRequest(517)))
+        .packet(Fixtures.att(0x0040, Fixtures.exchangeMtuResponse(247)), sentByHost = false)
+        .packet(Fixtures.smp(0x0040, Fixtures.pairingRequest()))
+        .packet(Fixtures.smp(0x0040, Fixtures.pairingRequest(response = true)), sentByHost = false)
+        .packet(Fixtures.encryptionChange(0x0040), sentByHost = false)
+        .packet(Fixtures.signaling(0x0040, Fixtures.connectionParameterUpdateRequest()), sentByHost = false)
+        .packet(Fixtures.connectionUpdateComplete(0x0040), sentByHost = false)
+        .packet(Fixtures.att(0x0040, Fixtures.writeCommand(0x0025, byteArrayOf(0x01))))
+        .packet(Fixtures.att(0x0040, Fixtures.notification(0x0028, byteArrayOf(0x02))), sentByHost = false)
+        .packet(Fixtures.disconnectCommand(0x0040))
+        .packet(Fixtures.disconnectionComplete(0x0040), sentByHost = false)
+        .build()
+
+    @Test
+    fun `no two events of one capture share an id`() {
+        // The dedupe on import keys on the id alone, so a collision would silently swallow an
+        // event. Lifecycle, SMP, signalling and ATT records all derive ids from the same helper.
+        val events = parse(mixedCapture()).events
+
+        // The capture has to be a real mix, or uniqueness below would prove nothing.
+        assertTrue(events.count { it.direction == EventDirection.SYSTEM } >= 3)
+        assertTrue(events.any { it.operation == AttOperation.WRITE_COMMAND })
+        assertTrue(events.any { it.operation == AttOperation.NOTIFICATION })
+        // Several lifecycle events carry the same operation, handle, null attribute and empty
+        // payload: the record ordinal in the key is the only thing keeping them apart.
+        assertEquals(events.size, events.map { it.id }.toSet().size)
+    }
+
+    @Test
+    fun `a mixed capture parsed twice yields the same ids`() {
+        assertEquals(
+            parse(mixedCapture()).events.map { it.id },
+            parse(mixedCapture()).events.map { it.id },
+        )
     }
 
     @Test

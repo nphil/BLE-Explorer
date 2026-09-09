@@ -471,4 +471,31 @@ class BtsnoopHciTest {
 
         assertEquals(MAX_RAW_PACKET_BYTES * 2, result.rawHex.values.single().length)
     }
+
+    // ------------------------------------------------------------------ table coverage
+
+    /**
+     * A disconnect reason or command status that falls through to its own number tells an operator
+     * nothing, and a missing row is invisible until a device hits it. Every code Vol 1 Part F,
+     * Section 1.3 assigns has to be named; the three it reserves (0x2B, 0x31, 0x33) do not.
+     */
+    @Test
+    fun `every assigned HCI status code has a name`() {
+        val reserved = setOf(0x2B, 0x31, 0x33)
+        val unnamed = (0x00..0x48)
+            .filterNot { it in reserved }
+            .filter { HciNames.statusText(it) == "Status 0x%02X".format(it) }
+
+        assertTrue("unnamed HCI status codes: ${unnamed.map { "0x%02X".format(it) }}", unnamed.isEmpty())
+    }
+
+    /** Same for the SMP failure reasons of Vol 3 Part H, Section 3.5.5, Table 3.7. */
+    @Test
+    fun `every SMP failure reason has a name`() {
+        val unnamed = (0x01..0x0F).filter {
+            HciNames.smpFailureReason(it) == "Reason 0x%02X".format(it)
+        }
+
+        assertTrue("unnamed SMP reasons: ${unnamed.map { "0x%02X".format(it) }}", unnamed.isEmpty())
+    }
 }
