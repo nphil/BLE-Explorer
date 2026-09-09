@@ -124,19 +124,48 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
      * Publishes one dump immediately as a single attachment (ntfy treats bodies over 4 KB as
      * attachments anyway; naming the file keeps it in one piece and one budget slot).
      */
-    suspend fun sendNow(title: String, body: String): String =
-        publish(settings.first(), title, NtfyBudget.redact(body), filename = "blueshark-diagnostics.txt").detail
+    suspend fun sendNow(title: String, body: String): String {
+        val redacted = NtfyBudget.redact(body)
+        // Short dumps read better as message text; ntfy turns anything past ~4 KB into an
+        // attachment regardless, so name the file only when it will actually become one.
+        val filename = if (redacted.toByteArray(Charsets.UTF_8).size > NtfyBudget.MAX_BODY_BYTES) {
+            "blueshark-diagnostics.txt"
+        } else {
+            null
+        }
+        return publish(settings.first(), title, redacted, filename).detail
+    }
 
     /**
-     * Uploads one file as an ntfy attachment (ntfy.sh caps attachments at 2 MB). Binary, so no
-     * redaction is possible: callers say so in the UI before offering it.
+     * Uploads one file as gzipped ntfy attachments, split into as many parts as the 2 MB
+     * per-attachment ceiling requires. Binary, so no redaction is possible: callers say so in the
+     * UI before offering it. Every outcome is also written to the log sink, because the caller's
+     * snackbar only exists on the device and these uploads are exactly what a remote reader needs
+     * to know succeeded.
      */
     suspend fun sendFile(title: String, file: java.io.File): String {
-        if (file.length() > MAX_ATTACHMENT_BYTES) return "${file.name} is ${file.length() / 1024} KB; ntfy.sh allows 2 MB"
         val s = settings.first()
         if (!s.ntfyEnabled) return "ntfy sink is off"
-        val bytes = withContext(Dispatchers.IO) { file.readBytes() }
-        return publishBytes(s, title, bytes, file.name).detail
+        val gz = withContext(Dispatchers.IO) {
+            val out = java.io.ByteArrayOutputStream()
+            java.util.zip.GZIPOutputStream(out).use { z -> file.inputStream().use { it.copyTo(z) } }
+            out.toByteArray()
+        }
+        val chunk = MAX_ATTACHMENT_BYTES.toInt()
+        val partCount = ((gz.size + chunk - 1) / chunk).coerceAtLeast(1)
+        val parts = (0 until partCount).map { gz.copyOfRange(it * chunk, minOf((it + 1) * chunk, gz.size)) }
+        val results = parts.mapIndexed { index, part ->
+            val suffix = if (parts.size == 1) "" else ".part${index + 1}of${parts.size}"
+            val name = "${file.name}.gz$suffix"
+            val outcome = publishBytes(s, if (parts.size == 1) title else "$title (${index + 1}/${parts.size})", part, name)
+            log("upload", "$name: ${outcome.detail}")
+            outcome
+        }
+        return if (results.all { it.sent }) {
+            "uploaded ${gz.size} bytes in ${parts.size} part(s)"
+        } else {
+            results.first { !it.sent }.detail
+        }
     }
 
     private fun startFlusher() {
