@@ -11,7 +11,6 @@ import dev.nphil.blueshark.ble.CharacteristicRef
 import dev.nphil.blueshark.ble.ConnectionState
 import dev.nphil.blueshark.ble.GattClient
 import dev.nphil.blueshark.ble.ScannedDevice
-import dev.nphil.blueshark.ble.ScannerRepository
 import dev.nphil.blueshark.ble.displayName
 import dev.nphil.blueshark.model.AdvertisementSample
 import dev.nphil.blueshark.model.BleEvent
@@ -112,8 +111,10 @@ data class SavedToSession(val sessionId: String)
 
 class ScanViewModel(private val container: AppContainer) : ViewModel() {
 
-    private val scanner = ScannerRepository(container.appContext, container.bluetoothManager, viewModelScope)
-    private val gatt = GattClient(container.appContext, container.bluetoothManager, viewModelScope)
+    // Process-scoped: the Signal screen picks its target from this very aggregate, and the link
+    // it measures is this very client's.
+    private val scanner = container.scanner
+    private val gatt = container.gattClient
 
     private val _state = MutableStateFlow(ScanUiState())
     val state: StateFlow<ScanUiState> = _state.asStateFlow()

@@ -82,6 +82,7 @@ fun ScanScreen(
     bluetoothGranted: Boolean,
     requestPermissions: () -> Unit,
     onOpenInSession: (sessionId: String) -> Unit,
+    onSignal: (address: String) -> Unit,
 ) {
     val viewModel: ScanViewModel = viewModel(factory = remember(container) { ScanViewModel.factory(container) })
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -161,6 +162,7 @@ fun ScanScreen(
                                 onWrite = viewModel::openWriteDialog,
                                 onSubscribe = viewModel::setSubscribed,
                                 onSaveToSession = viewModel::openSessionPicker,
+                                onSignal = { onSignal(address) },
                             ),
                         )
                     }

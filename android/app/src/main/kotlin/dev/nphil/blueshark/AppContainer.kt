@@ -3,6 +3,9 @@ package dev.nphil.blueshark
 import android.app.Application
 import android.bluetooth.BluetoothManager
 import android.content.Context
+import dev.nphil.blueshark.ble.GattClient
+import dev.nphil.blueshark.ble.ScannerRepository
+import dev.nphil.blueshark.ble.SignalMonitor
 import dev.nphil.blueshark.data.SessionStore
 import dev.nphil.blueshark.debug.DebugLog
 import dev.nphil.blueshark.guide.GuideController
@@ -31,4 +34,20 @@ class AppContainer(context: Context) {
      * app, the checklist and the markers it produces.
      */
     val guide = GuideController(appContext, appScope, debug)
+
+    /**
+     * The one BLE scanner in the process. Shared so the Scan tab's aggregate and the Signal
+     * screen's device picker are the same list, and so the radio never carries two discovery
+     * registrations (Android throttles scan starts to five per 30 s).
+     */
+    val scanner = ScannerRepository(appContext, bluetoothManager, appScope)
+
+    /**
+     * One GATT link at a time, shared by every screen that needs one: the stack allows a single
+     * outstanding ATT request per connection, and two clients would fight over it.
+     */
+    val gattClient = GattClient(appContext, bluetoothManager, appScope)
+
+    /** Placement diagnostics: its own address-filtered scan plus connected-RSSI polling. */
+    val signalMonitor by lazy { SignalMonitor(appContext, bluetoothManager, gattClient, appScope) }
 }

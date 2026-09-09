@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.Button
@@ -60,6 +61,8 @@ class DeviceDetailActions(
     val onWrite: (CharacteristicRef, List<String>) -> Unit,
     val onSubscribe: (CharacteristicRef, Boolean) -> Unit,
     val onSaveToSession: () -> Unit,
+    /** Hands this address to the Signal screen for placement diagnostics. */
+    val onSignal: () -> Unit,
 )
 
 @Composable
@@ -226,6 +229,13 @@ private fun DetailHeader(
                         Icon(Icons.Filled.Link, contentDescription = null, modifier = Modifier.size(18.dp))
                         Text(if (connecting) "Connecting…" else "Connect", modifier = Modifier.padding(start = 8.dp))
                     }
+                }
+                FilledTonalButton(
+                    onClick = actions.onSignal,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Icon(Icons.Filled.Radar, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Text("Signal", modifier = Modifier.padding(start = 8.dp))
                 }
                 OutlinedButton(
                     onClick = actions.onSaveToSession,

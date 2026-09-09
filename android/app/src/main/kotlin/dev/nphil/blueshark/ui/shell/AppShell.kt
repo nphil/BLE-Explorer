@@ -45,6 +45,7 @@ import dev.nphil.blueshark.ui.relay.RelayScreen
 import dev.nphil.blueshark.ui.scan.ScanScreen
 import dev.nphil.blueshark.ui.sessions.SessionsScreen
 import dev.nphil.blueshark.ui.settings.SettingsScreen
+import dev.nphil.blueshark.ui.signal.SignalScreen
 import dev.nphil.blueshark.ui.theme.ThemeSettings
 
 private enum class NavLayout { BAR, RAIL, DRAWER }
@@ -150,6 +151,12 @@ private const val SESSIONS_ROUTE = "sessions?session={$SESSIONS_ARG}"
 /** Deep link that opens the Sessions tab with [sessionId] already selected. */
 private fun sessionsRoute(sessionId: String): String = "sessions?session=${Uri.encode(sessionId)}"
 
+private const val SIGNAL_ARG = "address"
+private const val SIGNAL_ROUTE = "signal?address={$SIGNAL_ARG}"
+
+/** Deep link that opens the Signal tab already measuring [address]. */
+private fun signalRoute(address: String): String = "signal?address=${Uri.encode(address)}"
+
 @Composable
 private fun Content(
     navController: NavHostController,
@@ -170,6 +177,9 @@ private fun Content(
                     onOpenInSession = { sessionId ->
                         navController.navigate(sessionsRoute(sessionId)) { launchSingleTop = true }
                     },
+                    onSignal = { address ->
+                        navController.navigate(signalRoute(address)) { launchSingleTop = true }
+                    },
                 )
             }
             composable(Destination.CAPTURE.route) {
@@ -177,6 +187,26 @@ private fun Content(
             }
             composable(Destination.RELAY.route) {
                 RelayScreen(container, expanded, permissions.granted, permissions.request)
+            }
+            composable(
+                route = SIGNAL_ROUTE,
+                // Same optional-query-argument form as the sessions route: a bare "signal" from the
+                // navigation bar matches, and `signal?address=<addr>` lands its value in arguments.
+                arguments = listOf(
+                    navArgument(SIGNAL_ARG) {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                ),
+            ) { entry ->
+                SignalScreen(
+                    container = container,
+                    expanded = expanded,
+                    bluetoothGranted = permissions.granted,
+                    requestPermissions = permissions.request,
+                    initialAddress = entry.arguments?.getString(SIGNAL_ARG),
+                )
             }
             composable(
                 route = SESSIONS_ROUTE,

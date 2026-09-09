@@ -306,13 +306,6 @@ class ScannerRepository(
         return removed
     }
 
-    private fun txPowerOf(result: ScanResult, record: ScanRecord?): Int? {
-        val fromResult = result.txPower
-        if (fromResult != ScanResult.TX_POWER_NOT_PRESENT) return fromResult
-        val fromRecord = record?.txPowerLevel ?: Int.MIN_VALUE
-        return fromRecord.takeIf { it != Int.MIN_VALUE }
-    }
-
     private fun manufacturerDataOf(record: ScanRecord?): Map<Int, ByteArray> {
         val sparse = record?.manufacturerSpecificData ?: return emptyMap()
         val size = sparse.size()
@@ -331,6 +324,17 @@ class ScannerRepository(
         const val STALE_AFTER_MS = 60_000L
         private const val TICK_MS = 250L
         private const val PACKET_BUFFER = 512
+
+        /**
+         * Advertised transmit power: the scan result's own field where the stack surfaced one,
+         * else the AD structure inside the record. Both use a distinct "absent" sentinel.
+         */
+        fun txPowerOf(result: ScanResult, record: ScanRecord?): Int? {
+            val fromResult = result.txPower
+            if (fromResult != ScanResult.TX_POWER_NOT_PRESENT) return fromResult
+            val fromRecord = record?.txPowerLevel ?: Int.MIN_VALUE
+            return fromRecord.takeIf { it != Int.MIN_VALUE }
+        }
 
         fun scanFailureMessage(code: Int): String = when (code) {
             ScanCallback.SCAN_FAILED_ALREADY_STARTED ->
