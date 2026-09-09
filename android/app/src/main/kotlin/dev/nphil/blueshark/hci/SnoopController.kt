@@ -184,6 +184,15 @@ class SnoopController(
     private val appContext = context.applicationContext
     private val cacheRoot = File(appContext.cacheDir, "hci")
 
+    /**
+     * Newest parsed capture still in the cache. Sessions written before the path was persisted
+     * (and imports whose file was staged under a different name) can still be uploaded through
+     * this, because the file itself outlives the state that pointed at it.
+     */
+    fun newestCachedCapture(): File? = cacheRoot.listFiles()
+        ?.filter { it.isFile && (it.name.endsWith(".log") || it.name.contains("btsnoop")) }
+        ?.maxByOrNull { it.lastModified() }
+
     /** Exact argument vectors used by this controller. */
     object Argv {
         val ID = listOf("id")

@@ -28,6 +28,12 @@ data class CaptureSession(
     val notifications: List<NotificationSpec> = emptyList(),
     val protocol: ProtocolModel = ProtocolModel(),
     val environment: CaptureEnvironment? = null,
+    /**
+     * Absolute path of the btsnoop file this session was parsed from, kept so the raw capture can
+     * still be exported after the app restarts. The file lives in the cache and may be gone;
+     * readers must check before offering it.
+     */
+    val capturePath: String? = null,
     val ciphers: List<CipherScheme> = emptyList(),
     val notes: String = "",
 )

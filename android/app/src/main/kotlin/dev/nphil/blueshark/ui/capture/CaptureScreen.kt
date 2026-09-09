@@ -500,6 +500,19 @@ private fun SessionCard(state: CaptureUiState, viewModel: CaptureViewModel) {
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { viewModel.createSession(state.sessionName) }) { Text("New session") }
+                // Lives here, not only in the collection report: reopening a session in a fresh
+                // process has no report card, and the raw file is exactly what a remote reader
+                // needs from a session captured hours ago.
+                if (state.ntfyEnabled && state.capturePath != null) {
+                    var confirmSessionUpload by remember { mutableStateOf(false) }
+                    OutlinedButton(onClick = { confirmSessionUpload = true }) { Text("Send capture to ntfy…") }
+                    if (confirmSessionUpload) {
+                        RawCaptureDialog(
+                            onDismiss = { confirmSessionUpload = false },
+                            onConfirm = { confirmSessionUpload = false; viewModel.sendCapture() },
+                        )
+                    }
+                }
             }
             if (state.sessions.isNotEmpty()) {
                 Text("Recent", style = MaterialTheme.typography.labelMedium)
@@ -928,22 +941,9 @@ private fun ResultCard(state: CaptureUiState, viewModel: CaptureViewModel) {
                     var confirmUpload by remember { mutableStateOf(false) }
                     TextButton(onClick = { confirmUpload = true }) { Text("Send capture to ntfy…") }
                     if (confirmUpload) {
-                        AlertDialog(
-                            onDismissRequest = { confirmUpload = false },
-                            title = { Text("Upload raw radio traffic?") },
-                            text = {
-                                Text(
-                                    "This sends the btsnoop file exactly as captured to the ntfy topic in Settings. " +
-                                        "It contains every Bluetooth packet the tablet exchanged while logging was on: " +
-                                        "all nearby devices, addresses, and any pairing (SMP) key exchanges. Binary cannot " +
-                                        "be redacted. Anyone who knows the topic name can download it for a few hours, " +
-                                        "unless the topic is reserved and you set an access token.",
-                                )
-                            },
-                            confirmButton = {
-                                TextButton(onClick = { confirmUpload = false; viewModel.sendCapture() }) { Text("Upload") }
-                            },
-                            dismissButton = { TextButton(onClick = { confirmUpload = false }) { Text("Cancel") } },
+                        RawCaptureDialog(
+                            onDismiss = { confirmUpload = false },
+                            onConfirm = { confirmUpload = false; viewModel.sendCapture() },
                         )
                     }
                 }
@@ -1129,4 +1129,28 @@ private fun ProgressPanel(progress: CollectProgress?, working: Boolean, busy: St
             )
         }
     }
+}
+
+/**
+ * The one place the raw-capture upload is explained. A btsnoop holds every packet the tablet
+ * exchanged while logging was on, for every device in range, and binary cannot be redacted, so the
+ * operator confirms with that in front of them rather than in a tooltip.
+ */
+@Composable
+private fun RawCaptureDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Upload raw radio traffic?") },
+        text = {
+            Text(
+                "This sends the btsnoop file exactly as captured to the ntfy topic in Settings. It " +
+                    "contains every Bluetooth packet the tablet exchanged while logging was on: all " +
+                    "nearby devices, addresses, and any pairing (SMP) key exchanges. Binary cannot be " +
+                    "redacted. Anyone who knows the topic name can download it for a few hours, unless " +
+                    "the topic is reserved and you set an access token.",
+            )
+        },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Upload") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }

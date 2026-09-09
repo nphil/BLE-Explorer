@@ -547,6 +547,10 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
                     sessionName = session.name,
                     markers = session.markers,
                     events = session.events.takeLast(MAX_SESSION_EVENTS),
+                    // The raw file outlives the process that collected it, so reopening a session
+                    // can still upload the capture - as long as the cache still holds it.
+                    capturePath = session.capturePath?.takeIf { File(it).isFile }
+                        ?: snoop.newestCachedCapture()?.absolutePath,
                 ).withTimeline()
             }
         }
@@ -698,7 +702,10 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
             val known = session.events.mapTo(HashSet(session.events.size), BleEvent::id)
             val fresh = outcome.events.filterNot { it.id in known }
             appended = fresh.size
-            val withEvents = session.copy(events = (session.events + fresh).takeLast(MAX_SESSION_EVENTS))
+            val withEvents = session.copy(
+                events = (session.events + fresh).takeLast(MAX_SESSION_EVENTS),
+                capturePath = file.absolutePath,
+            )
             if (onlyPeer == null) withEvents else enrich(withEvents, outcome.summary, onlyPeer)
         }
         rawPackets = trimRawPackets(outcome.rawHex)
