@@ -278,7 +278,7 @@ class SnoopController(
                 bluetoothManagerShell = managerHelp.succeeded || managerHelp.text.contains("enable"),
                 bluetoothManagerDumpsys = dumpsysHelp.succeeded || dumpsysHelp.text.isNotBlank(),
                 // `bugreportz -v` prints its version but exits non-zero on some builds; the version is what counts.
-                bugreportz = bugreportz.text.takeIf { it.matches(Regex("""\d+(\.\d+)*""")) }
+                bugreportz = (bugreportz.stdout + bugreportz.stderr).trim().takeIf { it.matches(Regex("""\d+(\.\d+)*""")) }
                     ?: bugreportz.text.takeIf { bugreportz.succeeded && it.isNotBlank() }
                     ?: "not available (${bugreportz.failure})",
                 probedAtEpochMs = System.currentTimeMillis(),

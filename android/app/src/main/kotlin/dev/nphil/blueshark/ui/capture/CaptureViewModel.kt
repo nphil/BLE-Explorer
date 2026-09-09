@@ -124,6 +124,8 @@ data class CaptureUiState(
     val attempts: List<CollectAttempt> = emptyList(),
     val warnings: List<String> = emptyList(),
     val collectedFrom: String? = null,
+    /** Local path of the last parsed btsnoop file, for "Send capture to ntfy". */
+    val capturePath: String? = null,
     val artifacts: List<String> = emptyList(),
     val snoopModeDetail: String? = null,
     /** Shell may not write the snoop property; the user must flip the Developer options toggle. */
@@ -281,6 +283,21 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
             val clipboard = appContext.getSystemService(ClipboardManager::class.java)
             clipboard.setPrimaryClip(ClipData.newPlainText("BlueShark diagnostics", text))
             report("Diagnostics copied (${text.length} chars)")
+        }
+    }
+
+    /**
+     * Uploads the last btsnoop file plus this session's markers (with their control refs) to the
+     * ntfy topic, so the capture can be decoded off-device. Binary: nothing in it is redacted.
+     */
+    fun sendCapture() {
+        val path = _state.value.capturePath ?: return report("Nothing collected yet")
+        viewModelScope.launch {
+            val markers = _state.value.markers.joinToString("\n") { m ->
+                "${m.timestampEpochMicros} ${m.source} ${m.label}" + (m.control?.let { " [${it.viewId} ${it.screen}]" } ?: "")
+            }
+            report(debug.sendNow("BlueShark markers ${_state.value.sessionName}", "session=${_state.value.sessionId}\n$markers"))
+            report(debug.sendFile("BlueShark capture ${_state.value.sessionName}", File(path)))
         }
     }
 
@@ -696,6 +713,7 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
                 attempts = attempts,
                 warnings = collectWarnings + outcome.summary.warnings,
                 collectedFrom = source,
+                capturePath = file.absolutePath,
                 artifacts = artifacts.map { it.name },
                 completed = current.completed + CaptureStep.COLLECT,
                 progress = CollectProgress(

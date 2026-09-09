@@ -36,6 +36,7 @@ import java.util.Locale
 private const val RING_CAPACITY = 400
 /** Unsent lines kept while ntfy is unreachable; older ones are dropped with a marker line. */
 private const val PENDING_CAPACITY = 2_000
+private const val MAX_ATTACHMENT_BYTES = 1_900_000L
 private const val DEFAULT_TOPIC = "blueshark-nphil-XWESpf9F3gas"
 
 private val Context.debugStore: DataStore<Preferences> by preferencesDataStore("debug")
@@ -122,6 +123,18 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
     suspend fun sendNow(title: String, body: String): String =
         publish(settings.first(), title, NtfyBudget.redact(body), filename = "blueshark-diagnostics.txt").detail
 
+    /**
+     * Uploads one file as an ntfy attachment (ntfy.sh caps attachments at 2 MB). Binary, so no
+     * redaction is possible: callers say so in the UI before offering it.
+     */
+    suspend fun sendFile(title: String, file: java.io.File): String {
+        if (file.length() > MAX_ATTACHMENT_BYTES) return "${file.name} is ${file.length() / 1024} KB; ntfy.sh allows 2 MB"
+        val s = settings.first()
+        if (!s.ntfyEnabled) return "ntfy sink is off"
+        val bytes = withContext(Dispatchers.IO) { file.readBytes() }
+        return publishBytes(s, title, bytes, file.name).detail
+    }
+
     private fun startFlusher() {
         if (flusher?.isActive == true) return
         flusher = scope.launch {
@@ -158,7 +171,10 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
      * One HTTP publish. The daily counter is charged only after ntfy accepted the message; the
      * spacing rule is enforced against the last *attempt* so a failing server is not hammered.
      */
-    private suspend fun publish(s: DebugSettings, title: String, body: String, filename: String? = null): Outcome {
+    private suspend fun publish(s: DebugSettings, title: String, body: String, filename: String? = null): Outcome =
+        publishBytes(s, title, body.toByteArray(Charsets.UTF_8), filename)
+
+    private suspend fun publishBytes(s: DebugSettings, title: String, body: ByteArray, filename: String? = null): Outcome {
         if (!s.ntfyEnabled) return Outcome(false, "ntfy sink is off")
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         val now = System.currentTimeMillis()
@@ -182,12 +198,12 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
                 conn.doOutput = true
                 conn.setRequestProperty("Title", title)
                 conn.setRequestProperty("Priority", "min")
-                conn.setRequestProperty("Content-Type", "text/plain; charset=utf-8")
+                conn.setRequestProperty("Content-Type", if (filename == null) "text/plain; charset=utf-8" else "application/octet-stream")
                 filename?.let { conn.setRequestProperty("Filename", it) }
-                conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                conn.outputStream.use { it.write(body) }
                 val code = conn.responseCode
                 conn.disconnect()
-                if (code in 200..299) Outcome(true, "sent ${body.length} chars at ${stamp.format(Date())}")
+                if (code in 200..299) Outcome(true, "sent ${body.size} bytes at ${stamp.format(Date())}")
                 else Outcome(false, "ntfy HTTP $code")
             } catch (e: IOException) {
                 Outcome(false, "ntfy unreachable: ${e.message}")

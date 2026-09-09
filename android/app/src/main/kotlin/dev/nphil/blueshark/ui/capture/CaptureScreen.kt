@@ -923,6 +923,9 @@ private fun ResultCard(state: CaptureUiState, viewModel: CaptureViewModel) {
                     Spacer(Modifier.width(6.dp))
                     Text("Copy report")
                 }
+                if (state.ntfyEnabled && state.capturePath != null) {
+                    TextButton(onClick = viewModel::sendCapture) { Text("Send capture to ntfy (unredacted)") }
+                }
                 if (state.error != null) TextButton(onClick = viewModel::clearError) { Text("Dismiss error") }
             }
             if (state.logcatFile != null) {
