@@ -57,6 +57,18 @@ object NtfyBudget {
         return text.substring(0, end)
     }
 
+    /**
+     * Bounds the unsent queue when ntfy is unreachable: drops the oldest tenth plus the overflow
+     * and leaves one marker line saying how many were lost. Returns the number dropped.
+     */
+    fun capPending(pending: ArrayDeque<String>, capacity: Int, marker: (dropped: Int) -> String): Int {
+        if (pending.size <= capacity) return 0
+        val drop = pending.size - capacity + capacity / 10
+        repeat(drop) { pending.removeFirst() }
+        pending.addFirst(marker(drop))
+        return drop
+    }
+
     private val MAC = Regex("""\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b""")
     private val ANDROID_ID = Regex("""(?i)(android_id\s*[=:]\s*)[0-9a-f]{16}""")
     private val SECURE_SECTION = Regex("""(?ms)^## settings secure\n.*?(?=^## |\z)""")

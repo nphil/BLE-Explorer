@@ -28,7 +28,6 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
-import java.util.ArrayDeque
 import java.util.Date
 import java.util.Locale
 
@@ -42,10 +41,11 @@ private const val DEFAULT_TOPIC = "blueshark-nphil-XWESpf9F3gas"
 private val Context.debugStore: DataStore<Preferences> by preferencesDataStore("debug")
 private val KEY_ENABLED = booleanPreferencesKey("ntfy_enabled")
 private val KEY_TOPIC = stringPreferencesKey("ntfy_topic")
+private val KEY_TOKEN = stringPreferencesKey("ntfy_token")
 private val KEY_DAY = stringPreferencesKey("ntfy_day")
 private val KEY_SENT_TODAY = intPreferencesKey("ntfy_sent_today")
 
-data class DebugSettings(val ntfyEnabled: Boolean = false, val topic: String = DEFAULT_TOPIC) {
+data class DebugSettings(val ntfyEnabled: Boolean = false, val topic: String = DEFAULT_TOPIC, val token: String = "") {
     val topicUrl: String get() = "https://ntfy.sh/$topic"
 }
 
@@ -74,6 +74,7 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
         DebugSettings(
             ntfyEnabled = prefs[KEY_ENABLED] ?: false,
             topic = prefs[KEY_TOPIC]?.takeIf { it.matches(TOPIC_RULE) } ?: DEFAULT_TOPIC,
+            token = prefs[KEY_TOKEN].orEmpty(),
         )
     }
 
@@ -94,10 +95,8 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
                 if (ring.size == RING_CAPACITY) ring.removeFirst()
                 ring.addLast(line)
                 pending.addLast(line)
-                if (pending.size > PENDING_CAPACITY) {
-                    val drop = pending.size - PENDING_CAPACITY + PENDING_CAPACITY / 10
-                    repeat(drop) { pending.removeFirst() }
-                    pending.addFirst("${stamp.format(Date())} [debug] dropped $drop unsent lines (ntfy unreachable)")
+                NtfyBudget.capPending(pending, PENDING_CAPACITY) { dropped ->
+                    "${stamp.format(Date())} [debug] dropped $dropped unsent lines (ntfy unreachable)"
                 }
                 _status.update { it.copy(queuedLines = pending.size) }
             }
@@ -110,6 +109,11 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
     suspend fun setEnabled(enabled: Boolean) {
         store.edit { it[KEY_ENABLED] = enabled }
         if (enabled) log("debug", "ntfy sink enabled on ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE}, BlueShark ${BuildConfig.VERSION_NAME}")
+    }
+
+    /** ntfy access token (`tk_…`) for a reserved/protected topic; blank means anonymous publish. */
+    suspend fun setToken(token: String) {
+        store.edit { it[KEY_TOKEN] = token.trim() }
     }
 
     suspend fun setTopic(topic: String) {
@@ -198,6 +202,7 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
                 conn.doOutput = true
                 conn.setRequestProperty("Title", title)
                 conn.setRequestProperty("Priority", "min")
+                if (s.token.isNotBlank()) conn.setRequestProperty("Authorization", "Bearer ${s.token}")
                 conn.setRequestProperty("Content-Type", if (filename == null) "text/plain; charset=utf-8" else "application/octet-stream")
                 filename?.let { conn.setRequestProperty("Filename", it) }
                 conn.outputStream.use { it.write(body) }

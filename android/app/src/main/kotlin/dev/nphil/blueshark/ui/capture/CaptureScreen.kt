@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -924,7 +925,27 @@ private fun ResultCard(state: CaptureUiState, viewModel: CaptureViewModel) {
                     Text("Copy report")
                 }
                 if (state.ntfyEnabled && state.capturePath != null) {
-                    TextButton(onClick = viewModel::sendCapture) { Text("Send capture to ntfy (unredacted)") }
+                    var confirmUpload by remember { mutableStateOf(false) }
+                    TextButton(onClick = { confirmUpload = true }) { Text("Send capture to ntfy…") }
+                    if (confirmUpload) {
+                        AlertDialog(
+                            onDismissRequest = { confirmUpload = false },
+                            title = { Text("Upload raw radio traffic?") },
+                            text = {
+                                Text(
+                                    "This sends the btsnoop file exactly as captured to the ntfy topic in Settings. " +
+                                        "It contains every Bluetooth packet the tablet exchanged while logging was on: " +
+                                        "all nearby devices, addresses, and any pairing (SMP) key exchanges. Binary cannot " +
+                                        "be redacted. Anyone who knows the topic name can download it for a few hours, " +
+                                        "unless the topic is reserved and you set an access token.",
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(onClick = { confirmUpload = false; viewModel.sendCapture() }) { Text("Upload") }
+                            },
+                            dismissButton = { TextButton(onClick = { confirmUpload = false }) { Text("Cancel") } },
+                        )
+                    }
                 }
                 if (state.error != null) TextButton(onClick = viewModel::clearError) { Text("Dismiss error") }
             }

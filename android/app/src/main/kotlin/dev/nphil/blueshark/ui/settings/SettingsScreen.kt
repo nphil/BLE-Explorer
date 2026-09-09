@@ -1,6 +1,7 @@
 package dev.nphil.blueshark.ui.settings
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import dev.nphil.blueshark.debug.DebugSettings
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.platform.LocalContext
@@ -169,6 +170,22 @@ private fun DebugSection(container: AppContainer) {
             TextButton(onClick = {
                 clipboard.setPrimaryClip(ClipData.newPlainText("ntfy topic", settings.topicUrl))
             }) { Text("Copy URL") }
+        }
+        var tokenDraft by remember(settings.token) { mutableStateOf(settings.token) }
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = tokenDraft,
+                onValueChange = { tokenDraft = it.trim() },
+                label = { Text("ntfy access token (optional, for a reserved topic)") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(
+                onClick = { scope.launch { container.debug.setToken(tokenDraft) } },
+                enabled = tokenDraft != settings.token,
+            ) { Text("Save") }
         }
         Text(
             settings.topicUrl + if (settings.ntfyEnabled) "  ·  queued ${status.queuedLines}  ·  sent today ${status.sentToday}" +

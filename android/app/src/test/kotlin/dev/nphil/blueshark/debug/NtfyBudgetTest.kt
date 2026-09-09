@@ -84,3 +84,17 @@ class NtfyBudgetTest {
         assertTrue(out.contains("Kitchen Lamp"))
     }
 }
+
+class NtfyPendingCapTest {
+    @Test
+    fun `overflow drops from the head and leaves one marker`() {
+        val q = ArrayDeque((1..250).map { "line $it" })
+        val dropped = NtfyBudget.capPending(q, capacity = 200) { "dropped $it" }
+        assertEquals(70, dropped) // 50 overflow + 10% headroom
+        assertEquals("dropped 70", q.first())
+        assertEquals("line 71", q.elementAt(1))
+        assertEquals("line 250", q.last())
+        assertEquals(181, q.size)
+        assertEquals(0, NtfyBudget.capPending(q, capacity = 200) { "never" })
+    }
+}
