@@ -30,7 +30,10 @@ enum class SnoopMode(val property: String) {
 /** Everything the capability probe could learn about this device's shell. */
 data class SnoopCapabilities(
     val shellIdentity: String = "",
+    /** Raw `persist.bluetooth.btsnooplogmode`; empty when unset. */
     val snoopMode: String = "",
+    /** Every `getprop` line mentioning "snoop": what the vendor's Settings toggle actually wrote. */
+    val snoopProperties: List<String> = emptyList(),
     val logDirectory: String = "",
     val logDirectoryReadable: Boolean = false,
     val bluetoothManagerShell: Boolean = false,
@@ -39,9 +42,28 @@ data class SnoopCapabilities(
     val probedAtEpochMs: Long = 0,
     val error: String? = null,
 ) {
-    val snoopModeIsFull: Boolean get() = snoopMode.equals("full", ignoreCase = true)
+    /**
+     * The mode the stack will use: `btsnooplogmode` wins; when it is unset the stack falls back
+     * to `btsnoopdefaultmode`; the pre-Android-9 boolean `btsnoopenable=true` meant full logging.
+     */
+    val effectiveSnoopMode: String
+        get() {
+            if (snoopMode.isNotBlank()) return snoopMode
+            propertyValue("persist.bluetooth.btsnoopdefaultmode")?.takeIf { it.isNotBlank() }?.let { return it }
+            if (propertyValue("persist.bluetooth.btsnoopenable") == "true") return "full"
+            return ""
+        }
+    val snoopModeIsFull: Boolean get() = effectiveSnoopMode.equals("full", ignoreCase = true)
     val probed: Boolean get() = probedAtEpochMs > 0
+
+    private fun propertyValue(name: String): String? =
+        snoopProperties.firstOrNull { it.startsWith("[$name]: [") }
+            ?.substringAfter("]: [")?.removeSuffix("]")
 }
+
+/** Filters `getprop` output down to snoop-related lines, sorted for stable display. */
+fun snoopPropertyLines(getpropOutput: String): List<String> =
+    getpropOutput.lineSequence().map { it.trim() }.filter { it.contains("snoop", ignoreCase = true) }.sorted().toList()
 
 /**
  * [deniedByPolicy] is true when `setprop` itself was refused. On every Android build the property
@@ -127,6 +149,8 @@ class SnoopController(
         val BUGREPORTZ_PROGRESS = listOf("bugreportz", "-p")
 
         fun cat(path: String) = listOf("cat", path)
+        /** Whole property table; filtered in-app to the snoop keys, because vendors add their own. */
+        val ALL_PROPS = listOf("getprop")
 
         val LOGCAT = listOf(
             "logcat", "-v", "epoch", "-b", "main,system",
@@ -140,13 +164,15 @@ class SnoopController(
         return try {
             val identity = shell.run(Argv.ID, SHORT_TIMEOUT)
             val mode = shell.run(Argv.GET_SNOOP_MODE, SHORT_TIMEOUT)
+            val allProps = shell.run(Argv.ALL_PROPS, SHORT_TIMEOUT)
             val listing = shell.run(Argv.LIST_LOG_DIR, SHORT_TIMEOUT)
             val dumpsysHelp = shell.run(Argv.DUMPSYS_HELP, SHORT_TIMEOUT)
             val managerHelp = shell.run(Argv.BLUETOOTH_MANAGER_HELP, SHORT_TIMEOUT)
             val bugreportz = shell.run(Argv.BUGREPORTZ_VERSION, SHORT_TIMEOUT)
             SnoopCapabilities(
                 shellIdentity = identity.text.ifBlank { identity.failure },
-                snoopMode = mode.text.ifBlank { "(unset)" },
+                snoopProperties = snoopPropertyLines(allProps.stdout),
+                snoopMode = mode.text,
                 logDirectory = listing.text.ifBlank { listing.failure },
                 logDirectoryReadable = listing.succeeded && listing.text.isNotBlank(),
                 bluetoothManagerShell = managerHelp.succeeded || managerHelp.text.contains("enable"),

@@ -397,14 +397,19 @@ private fun CapabilityCard(state: CaptureUiState, viewModel: CaptureViewModel) {
             } else {
                 FactRow("Shell identity", capabilities.shellIdentity, mono = true)
                 FactRow(
-                    label = "Snoop mode",
-                    value = capabilities.snoopMode,
+                    label = "Effective snoop mode",
+                    value = capabilities.effectiveSnoopMode.ifBlank { "(unset)" },
                     mono = true,
                     tint = if (capabilities.snoopModeIsFull) {
                         MaterialTheme.colorScheme.primary
                     } else {
                         MaterialTheme.colorScheme.error
                     },
+                )
+                FactRow(
+                    label = "Snoop properties",
+                    value = capabilities.snoopProperties.joinToString("\n").ifBlank { "(none set)" },
+                    mono = true,
                 )
                 FactRow("Log directory", capabilities.logDirectory.take(400), mono = true)
                 FactRow("cmd bluetooth_manager", if (capabilities.bluetoothManagerShell) "available" else "not available")

@@ -292,7 +292,7 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
             current.copy(
                 snoopModeDetail = result.detail,
                 snoopDenied = result.deniedByPolicy,
-                capabilities = current.capabilities.copy(snoopMode = result.observed.ifBlank { "(unset)" }),
+                capabilities = current.capabilities.copy(snoopMode = result.observed),
                 completed = if (result.applied) current.completed + step else current.completed - step,
             )
         }
