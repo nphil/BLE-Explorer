@@ -14,6 +14,7 @@ import dev.nphil.blueshark.AppContainer
 import dev.nphil.blueshark.ble.CharacteristicRef
 import dev.nphil.blueshark.ble.ConnectionState
 import dev.nphil.blueshark.ble.ScannedDevice
+import dev.nphil.blueshark.ble.releaseWhenComplete
 import dev.nphil.blueshark.ble.shortUuid
 import dev.nphil.blueshark.export.HaProfileBuilder
 import dev.nphil.blueshark.identify.DeviceFingerprint
@@ -1200,11 +1201,10 @@ class ProjectViewModel(
      * somebody else's sweep - including a sweep owned by a view model on another back-stack entry
      * that this screen cannot see. Failing the claim is not an error, it is a "not yet".
      *
-     * The release hangs off the job's completion rather than off a `finally` inside it, because a
-     * `finally` in the body is not reached at all when the scope is cancelled before the body ever
-     * starts - the ViewModel being cleared a moment after a tap. A claim leaked that way would
-     * block every write in the app for the rest of the process, with nothing an operator could do
-     * about it, so the release is attached where cancellation cannot skip it.
+     * Its lifetime is bound with [releaseWhenComplete] rather than released in the job's own
+     * `finally`: both this screen and the sweep runner wrote the `finally` version first and both
+     * were wrong the same way, which is why that reasoning lives in one tested function now
+     * instead of being an idiom each caller has to get right.
      *
      * @param reason how this operation names itself to whoever it turns away.
      */
@@ -1232,8 +1232,10 @@ class ProjectViewModel(
             }
         }
         work = job
+        container.linkExclusivity.releaseWhenComplete(claim, job)
+        // This screen's own bookkeeping, on the same completion for the same reason: a job whose
+        // body never ran must not leave the card showing progress forever.
         job.invokeOnCompletion {
-            container.linkExclusivity.release(claim)
             if (work === job) work = null
             _state.update { if (it.busy == label) it.copy(busy = null) else it }
         }

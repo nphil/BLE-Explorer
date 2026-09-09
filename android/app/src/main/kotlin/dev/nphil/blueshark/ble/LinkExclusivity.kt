@@ -1,5 +1,6 @@
 package dev.nphil.blueshark.ble
 
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -55,4 +56,23 @@ class LinkExclusivity {
     fun release(claim: Claim?) {
         if (claim != null && current.compareAndSet(claim, null)) _holder.value = null
     }
+}
+
+/**
+ * Ties [claim]'s lifetime to [job], releasing it whenever that job ends for any reason.
+ *
+ * Use this instead of releasing in the job's own `finally`. A coroutine launched on a scope that
+ * was already cancelled - a view model cleared in the same frame the operator started a run - never
+ * executes its body at all, so a `finally` there never runs and the claim is stranded. Nothing can
+ * then release it: claims are per-caller and the holder is gone, so every write in the app is
+ * refused for the rest of the process, with no way back short of a restart. `invokeOnCompletion`
+ * fires for that job too.
+ *
+ * It is also correctly ordered for teardown, which a caller-side release is not: completion is
+ * strictly after the job's own `finally`, so work that restores device state on the way out - the
+ * Command Prober's CCCD teardown, for one - has finished before the next claimant can take the
+ * link.
+ */
+fun LinkExclusivity.releaseWhenComplete(claim: LinkExclusivity.Claim?, job: Job) {
+    job.invokeOnCompletion { release(claim) }
 }

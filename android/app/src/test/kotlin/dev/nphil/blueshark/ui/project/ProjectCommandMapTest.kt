@@ -219,19 +219,34 @@ class ProjectCommandMapTest {
         assertTrue(enumerated.text.contains("010204020608ff03"))
     }
 
-    /** Enumeration must not rewrite what the device broadcast. */
+    /**
+     * Enumeration must not rewrite what the device broadcast.
+     *
+     * The inverted rule, and the one a later refactor will re-introduce silently: folding the
+     * enumerated services into `advertisedServiceUuids` makes the fingerprint see an
+     * advertisement the device never sent, which is how a nameless fff0/fff1 module gets
+     * certified as a known family from evidence the app wrote itself. So the advertised list has
+     * to come out of `fingerprintInput()` byte-for-byte as the scan recorded it, with the
+     * enumerated services reaching the fingerprint only through `gatt`.
+     */
     @Test
-    fun `the fingerprint sees the attribute database without the advertisement being rewritten`() {
+    fun `enumerating never adds to what the scan recorded as advertised`() {
         val gatt = database()
+        val advertised = listOf("0000fe95-0000-1000-8000-00805f9b34fb")
         val session = CaptureSession(
             name = "nameless module",
-            device = DeviceIdentity(address = address),
+            device = DeviceIdentity(address = address, advertisedServiceUuids = advertised),
             gatt = gatt,
         )
 
         val input = session.fingerprintInput()
 
-        assertEquals(emptyList<String>(), input.serviceUuids)
+        assertEquals(advertised, input.serviceUuids)
+        assertEquals(
+            "the enumerated fff0 must never appear as advertised evidence",
+            false,
+            input.serviceUuids.any { it.contains("fff0", ignoreCase = true) },
+        )
         assertEquals(gatt, input.gatt)
     }
 

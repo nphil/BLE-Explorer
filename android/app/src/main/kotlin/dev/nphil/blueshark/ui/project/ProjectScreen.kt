@@ -217,9 +217,12 @@ fun ProjectScreen(
     }
 
     // A finished sweep folds itself in, from the records it just persisted rather than from this
-    // screen's memory of it - so a sweep driven from the full probe page lands here too.
-    LaunchedEffect(probeUi.runId, probeUi.running) {
-        if (!probeUi.running && probeUi.runId != null) project.foldProbes(runId = probeUi.runId)
+    // screen's memory of it - so a sweep driven from the full probe page lands here too. A run
+    // that belonged to another device is skipped: its records were saved into that project.
+    LaunchedEffect(probeUi.runId, probeUi.running, probeUi.address) {
+        if (!probeUi.running && probeUi.runId != null && probeUi.address == ui.device.address) {
+            project.foldProbes(runId = probeUi.runId)
+        }
     }
 
     val readiness = remember(
@@ -297,6 +300,7 @@ fun ProjectScreen(
                 ProbeStageCard(
                     ui = ui,
                     probeUi = probeUi,
+                    sweepElsewhere = sweepElsewhere,
                     expanded = expanded,
                     open = isOpen(ProjectStage.PROBE),
                     onToggle = { toggle(ProjectStage.PROBE) },
@@ -557,6 +561,7 @@ private fun IdentifyCard(
 private fun ProbeStageCard(
     ui: ProjectUiState,
     probeUi: dev.nphil.blueshark.ui.probe.ProbeUiState,
+    sweepElsewhere: Boolean,
     expanded: Boolean,
     open: Boolean,
     onToggle: () -> Unit,
@@ -570,6 +575,7 @@ private fun ProbeStageCard(
     val codec = FrameCodecs.byId(probeUi.codecId)
     val counts = probeUi.outcomes.filterNot { it.step.canary }.groupingBy { it.verdict }.eachCount()
     val status = when {
+        sweepElsewhere -> "A sweep is running on ${probeUi.address} — this project's runner is that one"
         probeUi.running -> "Sweeping: step ${probeUi.stepNumber} of ${probeUi.stepTotal}"
         ui.probeFrames > 0 -> "${ui.probeFrames} frames probed · ${ui.probeAccepted} accepted"
         !probeUi.connected -> "Not connected — a sweep needs a link and a characteristic that answers"
@@ -582,10 +588,23 @@ private fun ProbeStageCard(
         open = open,
         onToggle = onToggle,
         primaryLabel = if (probeUi.connected) "Run the sweep" else "Connect & listen",
-        primaryEnabled = if (probeUi.connected) probeUi.canStart else ui.device.address.isNotBlank(),
+        primaryEnabled = when {
+            sweepElsewhere -> false
+            probeUi.connected -> probeUi.canStart
+            else -> ui.device.address.isNotBlank()
+        },
         onPrimary = if (probeUi.connected) onSweep else onConnect,
         busy = probeUi.running,
     ) {
+        if (sweepElsewhere) {
+            Text(
+                text = "The Command Prober is one runner shared with its own page, and right now it is " +
+                    "sweeping ${probeUi.address}. Its results are being saved to that device's project, " +
+                    "not this one. Stop it there, or wait, and this card will point back here.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
         Text(
             text = if (ui.family?.codecId != null) {
                 "Framing: ${codec?.label ?: probeUi.codecId} — preselected from the ${ui.family.name} match, " +

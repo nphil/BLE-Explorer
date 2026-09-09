@@ -13,6 +13,7 @@ import dev.nphil.blueshark.ble.CharacteristicRef
 import dev.nphil.blueshark.ble.ConnectionState
 import dev.nphil.blueshark.ble.LinkExclusivity
 import dev.nphil.blueshark.ble.ScannedDevice
+import dev.nphil.blueshark.ble.releaseWhenComplete
 import dev.nphil.blueshark.ble.shortUuid
 import dev.nphil.blueshark.model.AttOperation
 import dev.nphil.blueshark.model.BleEvent
@@ -407,17 +408,18 @@ class ProbeViewModel(private val container: AppContainer) : ViewModel() {
         // not instantaneous, and another page's sweep must not start inside it.
         val claim = claimLinkOrRefuse(CONNECT_HOLDS_THE_LINK) ?: return
         holdForeground(address)
-        viewModelScope.launch {
+        val job = viewModelScope.launch {
             try {
                 gatt.connect(address)
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (error: Throwable) {
                 _messages.tryEmit(error.message ?: "Connection failed.")
-            } finally {
-                container.linkExclusivity.release(claim)
             }
         }
+        // Same reasoning as the sweep's claim: a body that never runs never reaches a `finally`,
+        // and a stranded claim locks the link for the rest of the process.
+        container.linkExclusivity.releaseWhenComplete(claim, job)
     }
 
     fun disconnect() {
@@ -608,12 +610,10 @@ class ProbeViewModel(private val container: AppContainer) : ViewModel() {
                 _state.update { it.copy(running = false, stepLabel = "") }
             }
         }
-        // Bound to completion rather than released in the body's finally, for two reasons. It runs
-        // even when the scope was already cancelled and the body therefore never started, which a
-        // finally would miss - and a leaked process-wide claim locks the link for every page, with
-        // no way back short of restarting the app. And completion is strictly after runSweep's own
-        // finally, so the CCCD is already restored before the next claimant can take the link.
-        job.invokeOnCompletion { container.linkExclusivity.release(claim) }
+        // Never released in the body's finally; see releaseWhenComplete for why that strands the
+        // claim when the scope dies before the body starts, and why completion is the only point
+        // ordered after runSweep's CCCD teardown.
+        container.linkExclusivity.releaseWhenComplete(claim, job)
         sweepJob = job
     }
 
