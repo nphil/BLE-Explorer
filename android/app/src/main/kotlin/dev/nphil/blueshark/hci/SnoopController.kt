@@ -651,19 +651,23 @@ class SnoopController(
         val bluetoothEntries: List<String>,
     )
 
+    /** One capture found inside a bugreport, before the newest of them has been chosen. */
+    private class SnoopCandidate(val file: File, val entry: String, val rotated: Boolean, val stamp: Long)
+
     /**
      * One streaming pass over the bugreport zip. Any entry that starts with the btsnoop magic is
      * a capture, whatever the OEM named or placed it (AOSP: `FS/data/misc/bluetooth/logs/
-     * btsnoop_hci.log`; Qualcomm/HyperOS builds differ). The current file beats a `.last`
-     * rotation; the btsnooz summary in the text report is the fallback.
+     * btsnoop_hci.log`; Qualcomm/HyperOS builds differ).
+     *
+     * Every such entry is extracted, because zip order says nothing about recency: skipping an
+     * entry that looks older than the best so far would drop it permanently when the newest
+     * capture happens to be listed first. The live file beats a `.last` rotation and the newest
+     * timestamp wins, but the losers are kept and merged rather than discarded - a Bluetooth
+     * restart is part of the capture flow, so an operator's actions routinely straddle two files.
+     * The btsnooz summary in the text report remains the fallback when there is no capture at all.
      */
     private fun scanBugreportZip(zip: File, stamp: Long): ZipFindings {
-        var snoopFile: File? = null
-        var snoopEntry: String? = null
-        var snoopIsRotated = true
-        var snoopStamp = Long.MIN_VALUE
-        val others = ArrayList<File>()
-        val otherEntries = ArrayList<String>()
+        val candidates = ArrayList<SnoopCandidate>()
         var snooz: ByteArray? = null
         var snoozEntry: String? = null
         var entries = 0
@@ -679,32 +683,19 @@ class SnoopController(
                     related += name + if (entry.size >= 0) " (${entry.size} B)" else ""
                 }
                 val rotated = name.endsWith(".last") || name.contains(".last.")
-                // OEMs that timestamp the filename leave several captures in one bugreport, one
-                // per adapter start. The newest holds the traffic the operator just produced;
-                // taking the first match silently hands back a log that ends at the last restart.
-                val entryStamp = snoopEntryStampMs(name, entry.time)
                 val wantSnoop = smellsBluetooth && !name.endsWith(".txt", ignoreCase = true) &&
-                    (snoopFile == null || (snoopIsRotated && !rotated) || (rotated == snoopIsRotated && entryStamp > snoopStamp))
+                    candidates.size < MAX_SNOOP_CANDIDATES
                 when {
                     wantSnoop -> {
                         val head = ByteArray(BTSNOOP_MAGIC.size)
                         val read = readFully(zin, head)
                         if (read == head.size && head.contentEquals(BTSNOOP_MAGIC)) {
-                            // One file per zip entry: several captures can qualify (the adapter
-                            // restarts mid-session), and a shared name would let the last copy
+                            // One file per zip entry: a shared name would let the last copy
                             // overwrite the earlier one and alias it into the merge list.
                             val target = File(cacheRoot, bugreportSnoopFileName(stamp, name, rotated))
                             val bytes = copyEntry(SequenceInputStream(ByteArrayInputStream(head), NonClosing(zin)), target, MAX_SNOOP_BYTES)
                             if (bytes > head.size) {
-                                snoopFile?.takeIf { it != target }?.let { previous ->
-                                    // Keep it: a rotation still holds real traffic.
-                                    others += previous
-                                    otherEntries += snoopEntry.orEmpty()
-                                }
-                                snoopFile = target
-                                snoopEntry = name
-                                snoopIsRotated = rotated
-                                snoopStamp = entryStamp
+                                candidates += SnoopCandidate(target, name, rotated, snoopEntryStampMs(name, entry.time))
                             } else {
                                 target.delete()
                             }
@@ -722,7 +713,19 @@ class SnoopController(
                 zin.closeEntry()
             }
         }
-        return ZipFindings(snoopFile, others, otherEntries, snoopEntry, snooz, snoozEntry, entries, related)
+        val ordered = candidates.sortedWith(compareBy({ it.rotated }, { -it.stamp }))
+        val primary = ordered.firstOrNull()
+        val older = ordered.drop(1).sortedBy { it.stamp }
+        return ZipFindings(
+            primary?.file,
+            older.map { it.file },
+            older.map { it.entry },
+            primary?.entry,
+            snooz,
+            snoozEntry,
+            entries,
+            related,
+        )
     }
 
     private fun readFully(source: InputStream, into: ByteArray): Int {
@@ -869,6 +872,9 @@ class SnoopController(
 
         /** Entry names worth sniffing for the btsnoop magic, and worth listing when nothing matched. */
         val BLUETOOTH_ENTRY = Regex("""(?i)snoop|bluetooth|/bt[_/]|btsnoop|hci|\.cfa$""")
+        /** Captures extracted from one bugreport; a rotation-happy OEM must not fill the cache. */
+        const val MAX_SNOOP_CANDIDATES = 8
+
         const val MAX_RELATED_ENTRIES = 40
         val BUGREPORT_PATH = Regex("^/[A-Za-z0-9._/@+-]{1,255}\\.zip$")
 

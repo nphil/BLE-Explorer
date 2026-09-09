@@ -50,3 +50,65 @@ class BugreportSnoopFileNameTest {
         assertTrue(name, !name.contains('/') && !name.contains(' '))
     }
 }
+
+/**
+ * The zip lists entries in whatever order the OEM wrote them, so recency must be decided after the
+ * pass, never by skipping entries during it.
+ */
+class SnoopCandidateOrderTest {
+    private data class Candidate(val entry: String, val rotated: Boolean) {
+        val stamp = snoopEntryStampMs(entry, 0L)
+    }
+
+    private fun pick(candidates: List<Candidate>): Pair<String, List<String>> {
+        val ordered = candidates.sortedWith(compareBy({ it.rotated }, { -it.stamp }))
+        return ordered.first().entry to ordered.drop(1).sortedBy { it.stamp }.map { it.entry }
+    }
+
+    @Test
+    fun `the newest capture wins even when the zip lists it first`() {
+        val newestFirst = pick(
+            listOf(
+                Candidate("logs/btsnoop_hci_260909_172025.log", false),
+                Candidate("logs/btsnoop_hci_260909_163625.log", false),
+            ),
+        )
+        val newestLast = pick(
+            listOf(
+                Candidate("logs/btsnoop_hci_260909_163625.log", false),
+                Candidate("logs/btsnoop_hci_260909_172025.log", false),
+            ),
+        )
+        assertEquals("logs/btsnoop_hci_260909_172025.log", newestFirst.first)
+        assertEquals(newestFirst, newestLast)
+        // The loser is merged, not dropped: it holds the traffic from before the restart.
+        assertEquals(listOf("logs/btsnoop_hci_260909_163625.log"), newestFirst.second)
+    }
+
+    @Test
+    fun `a live file outranks a rotation regardless of stamps`() {
+        val (primary, older) = pick(
+            listOf(
+                Candidate("logs/btsnoop_hci_260909_172025.log.last", true),
+                Candidate("logs/btsnoop_hci_260909_163625.log", false),
+            ),
+        )
+        assertEquals("logs/btsnoop_hci_260909_163625.log", primary)
+        assertEquals(1, older.size)
+    }
+
+    @Test
+    fun `older captures are merged oldest first`() {
+        val (_, older) = pick(
+            listOf(
+                Candidate("logs/btsnoop_hci_260909_172025.log", false),
+                Candidate("logs/btsnoop_hci_260909_163625.log", false),
+                Candidate("logs/btsnoop_hci_260909_150000.log", false),
+            ),
+        )
+        assertEquals(
+            listOf("logs/btsnoop_hci_260909_150000.log", "logs/btsnoop_hci_260909_163625.log"),
+            older,
+        )
+    }
+}
