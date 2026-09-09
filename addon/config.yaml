@@ -1,7 +1,7 @@
 name: BLE Studio
 version: "0.2.0"
 slug: ble_studio
-description: Static BLE command profile viewer; Bluetooth is provided by the Home Assistant integration.
+description: Web workbench for reviewing BLE captures; Bluetooth is provided by the BLE Studio integration.
 url: https://github.com/nphil/BLE-Studio
 startup: services
 boot: auto

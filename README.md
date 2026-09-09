@@ -1,159 +1,94 @@
-<img src="branding/logo.svg" alt="BLE Studio" width="380">
+<p align="center"><img src="branding/logo-1200.png" alt="BLE Studio" width="520"></p>
 
 # BLE Studio
 
-An experimental, local-first Bluetooth LE workbench and Home Assistant custom integration. Capture evidence, inspect GATT traffic, map reviewed commands, and create explicit button controls through Home Assistant’s shared Bluetooth stack.
+Reverse-engineer cheap Bluetooth LE gadgets and bring them into Home Assistant, reliably.
 
-**Status: developer preview 0.2.0.** Parser, profile and selected browser interactions have been tested. No physical device, ESPHome proxy, Home Assistant clean installation, HACS installation, or container release has been validated in this environment. No universal-device compatibility is claimed.
+BLE Studio is a local-first toolkit with three parts:
 
-## Three parts, one project
-
-| Component | Purpose | Radio access |
+| Part | What it is | Where it runs |
 | --- | --- | --- |
-| BLE Studio | Guided capture import, analysis, byte comparison, evidence review and export | Optional Web Bluetooth on the computer/tablet viewing the page |
-| BLE Studio Integration | Reviewed fixed-payload buttons inside Home Assistant | HA Bluetooth API → active ESPHome proxy or local adapter |
-| Optional Workbench add-on / Docker image | Hosts the same browser UI locally | No host adapter, DBus, privileged device or proxy access of its own |
+| **BLE Studio for Android** | Native Kotlin / Material 3 app for scanning, exploring GATT, sniffing a vendor app's traffic, labelling commands and exporting evidence. Tablet-first, phone-capable. | Android 12+ (`android/`) |
+| **BLE Studio integration** | Home Assistant custom integration that turns device-tested commands into button entities through HA's shared Bluetooth stack (local adapters and ESPHome proxies). | HACS (`custom_components/ble_studio`) |
+| **BLE Studio add-on** | Optional web workbench served through HA Ingress for importing and reviewing captures on a desktop. | Supervisor add-on (`addon/`, `dist/`) |
 
-HACS installs **custom integrations**. The Supervisor add-on repository installs the optional **Workbench app**. Neither is required to keep the other running. The integration does not fetch code or profiles from the hosted workbench.
+Nothing leaves your device unless you share an export.
 
-## What works in this preview
+## Install the Android app (Obtainium)
 
-- Home Assistant-inspired sidebar, blue accents, light/dark themes, responsive cards and readable controls.
-- Independent browser-local sessions; synthetic demo never mixes into imported data.
-- JSON, header-based CSV/TSV and key=value log imports with atomic text validation.
-- Android H4 btsnoop parsing for fixed-channel ATT writes, notifications and indications; fragmented ACL reassembly and connection-handle reuse separation when disconnect events are captured.
-- Explicit unresolved handles; UUID mappings scoped to a captured connection.
-- Action labels, operation/connection/characteristic filters, byte comparisons with decimal/ASCII views.
-- Separate observed, hypothesis and user-reported device-tested stages.
-- Full evidence JSON, Python constants, workspace backups and strict eligible-only Home Assistant install profiles.
-- Permission-based Web Bluetooth discovery, reads and notification recording for the browser’s own GATT session.
-- Integration config/reconfigure flow; reviewed button entities disabled by default; explicit write opt-in.
-- Service membership and write-property validation, serialized writes, timeout handling and no automatic replay of failed writes.
+1. Install [Obtainium](https://github.com/ImranR98/Obtainium).
+2. Add an app with this URL: **`https://github.com/nphil/BLE-Studio`**
+3. Obtainium tracks releases and installs `BLE-Studio-vX.Y.Z.apk`. The APK is signed with the project key (SHA-256 `06:61:93:81:F0:C1:87:A6:AF:66:B5:5E:9F:ED:00:33:0E:F8:0B:E9:B7:B8:59:2C:AA:AD:E0:1A:94:98:65:1A`).
 
-## What this does not do
+Or download the APK from the [latest release](https://github.com/nphil/BLE-Studio/releases/latest).
 
-This is not a universal integration generator. It does not decode proprietary encryption, extract keys, bypass authentication, infer checksums or prove command meanings. It does not implement sensor/state decoding, dynamic sliders, locks, climate entities, automatic installation, over-the-air packet capture, raw PCAP decoding, or USB adapter firmware drivers.
+Requirements: Android 12 or newer, Bluetooth LE. [Shizuku](https://shizuku.rikka.app/) (ADB mode, no root) is optional and unlocks HCI snoop capture.
 
-Marking a command “device-tested” records **your report**, not an automated certification. Do not use unknown writes with safety-critical devices, locks, heaters, medical equipment or machinery.
+## The workflow
 
-## Capture routes
-
-| Route | Supported here | Important boundary |
-| --- | --- | --- |
-| Vendor app on Android | Import its HCI btsnoop log | Logs the phone’s traffic; capture/log retrieval depends on phone and Android version |
-| GATT/Wireshark tools | Import decoded JSON/CSV/text | Export discovery UUIDs or resolve ATT handles later |
-| Android tablet / desktop browser | Web Bluetooth reads and notifications when API/permissions are available | Uses that browser device’s radio; does not sniff the vendor app |
-| HA local adapter / active ESPHome proxy | Integration command writes | Uses Home Assistant’s connection stack, not the browser’s radio |
-| USB sniffer / Web Serial / WebUSB | Architecture extension point only | Requires a concrete supported adapter/firmware and OS/browser support |
-
-An ESPHome proxy is not an over-the-air sniffer for a separate phone connection. HA can expose advertisements and perform its own GATT interactions; it cannot generally recover the vendor app’s command exchange from another connection. Ordinary USB Bluetooth dongles are not interchangeable with serial sniffers.
-
-### Android vendor-app workflow
-
-1. Enable Developer options and Bluetooth HCI snoop logging. Restart Bluetooth.
-2. Connect the vendor app to your own device. Record an idle baseline.
-3. Press one button, note the timestamp, wait, and repeat three times. Avoid changing several things at once.
-4. Retrieve the btsnoop file using the phone’s supported logging/bug-report workflow. Do not upload an entire bug report or unrelated traffic.
-5. Import the file, select the relevant connection, label actions and resolve characteristic handles using discovery evidence from the same connection.
-6. Disable HCI logging after capture.
-
-The parser does not decode EATT, prepared/signed writes, discovery packets, encrypted application payloads or btsnoop formats other than version 1 / H4 datalink 1002. It reports unsupported/incomplete packets and rejects truncated records. Captures missing disconnect events can still leave connection reuse ambiguous; use short device-specific sessions.
-
-### Text example
-
-```text
-[0.000] WRITE_CMD action="Power on" service=fff0 char=fff1 value=01 01
-[0.065] NOTIFY action="Power on" service=fff0 char=fff2 value=A1 01
+```
+ Scan ──► Explore GATT ──► Capture vendor app ──► Label & verify ──► Export ──► HA integration
 ```
 
-This example is fictional. Fields: `direction`, `value`, `action`, `timestamp`, `service`, `characteristic`, `handle`, `connection`, `response`. `write_cmd` means without-response; `write_req` means with-response. A bare `write` leaves mode unknown unless `response` is supplied. Hex payloads must have complete bytes.
+1. **Scan.** Find the gadget, see its advertisement (name, manufacturer data, service UUIDs, RSSI, PHY, connectable).
+2. **Explore.** Connect from the tablet: full service / characteristic / descriptor tree with properties, negotiated MTU and PHY, read, write (with or without response, strict hex), subscribe. Every operation is serialized, bounded by a timeout, and logged.
+3. **Capture.** Sniff what the *vendor's* app sends so you do not have to guess:
+   - **Same device (recommended).** With Shizuku granted, BLE Studio flips `persist.bluetooth.btsnooplogmode` to `full`, restarts Bluetooth, launches the vendor app for you, lets you drop named markers ("power on", "brightness 50%") while you tap buttons, then collects the HCI snoop log (direct read, or via `bugreportz` and the AOSP btsnooz decoder) and parses it: H4 → ACL → L2CAP → ATT, with fragment reassembly and handle→UUID resolution from the captured discovery. Import of an existing `btsnoop_hci.log` or bugreport is also supported.
+   - **Relay (experimental).** For iOS-only vendor apps, BLE Studio can connect to the real device and advertise a clone; the phone connects to the tablet and every packet is relayed and logged. Hard limits apply (no MAC spoofing; iOS GATT caching and pairing can prevent it).
+4. **Label & verify.** Suggested commands are grouped from the capture and matched to your markers. Compare payloads byte-by-byte to see which bytes vary, note parameter hypotheses, and promote a command to *device-tested* only after you have physically replayed it.
+5. **Export.** Share the full **evidence bundle** (identity, GATT table, connection facts, every packet, markers, commands, protocol notes, capture environment) or the strict **HA install profile** consumed by the integration.
 
-Limits: 10 MB input file, 10,000 events/session, 512 bytes/value. UI tables show the first 250 filtered matches and comparison selectors the first 1,000 events; narrow/split large captures for detailed analysis. Exports retain all events. Browser storage capacity varies; use backups.
+The evidence bundle is what you hand to a developer (or an AI assistant) to write a full-featured integration: `docs/research/ha-ble-integrations.md` documents the reliability rules a generated integration must follow, learned from auditing real-world reverse-engineered integrations (Fluval, AC Infinity, BedJet).
 
-### Browser exploration
+## Reliability principles
 
-Open Capture → **Connect from this tablet / desktop**. Supply known service UUIDs, choose your device in the browser permission dialog, then read characteristics or record notifications. Save the captured session before leaving. Subscribe/unsubscribe interacts with the GATT notification configuration but does not send arbitrary device command payloads.
+The same rules govern the app and any integration built from its exports:
 
-Web Bluetooth requires a supported browser and secure context (normally HTTPS). It may be blocked in a Home Assistant iframe/companion webview or by Permissions Policy. A detected API does not guarantee radio access. Desktop Linux, Android USB access and Web Serial availability differ. Prefer Chrome on a supported platform and open the workbench directly where needed. No adapter chooser can make an unsupported OS USB dongle work automatically.
+- An address is not a route: resolve a fresh device before every connection.
+- One outstanding GATT operation at a time; every wait is bounded; a timeout is a failure, never a success.
+- Correlate responses to the request that caused them; never treat "any notification" as confirmation.
+- Prefer write-without-response only when the device has proven to accept it.
+- Track availability from advertisement age, not from failed polls.
+- Record what the wire actually did (MTU, spacing, latency, disconnect behaviour) instead of hard-coding folklore.
 
-## Install the custom integration
+## Themes
 
-[![Add repository to HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=nphil&repository=BLE-Explorer&category=integration)
+Twenty palettes with light and dark variants: Catppuccin, Nord, Dracula, Gruvbox, Solarized, Tokyo Night, Rosé Pine, Everforest, Kanagawa, One (Atom), Monokai Pro, Ayu, Night Owl, Material Palenight, GitHub, Horizon, Synthwave '84, Zenburn, Cobalt2, Nightfox, plus Material You dynamic color. Sources and contrast notes: `docs/palettes.md`.
+
+## Home Assistant integration
+
+[![Add repository to HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=nphil&repository=BLE-Studio&category=integration)
 [![Add integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=ble_studio)
 
-### HACS (after repository publication)
+1. HACS → custom repositories → add `https://github.com/nphil/BLE-Studio` as **Integration**, download, restart HA.
+2. In the app: Sessions → Export → **Share HA install profile** (only device-tested, non-synthetic commands are eligible; the report tells you why anything was excluded).
+3. HA → Settings → Devices & services → Add integration → **BLE Studio Integration**. Paste the profile. Writes are disabled until you explicitly enable them in Reconfigure; button entities start disabled.
 
-1. Install/configure HACS first. Open HACS → custom repositories.
-2. Add `https://github.com/nphil/BLE-Studio` as **Integration**.
-3. Download BLE Studio Integration and restart Home Assistant.
-4. In the workbench, save the device’s Bluetooth address. Only after physically testing a safe command, record evidence and set its write mode.
-5. Select Integration → **Download HA install profile**. This is the eligible-only runtime file, not the richer evidence/backup JSON.
-6. In HA, Settings → Devices & services → Add integration → BLE Studio Integration. Enter the target address and paste the install profile. Leave writes disabled for initial review.
-7. Check the generated device and buttons. Explicitly reconfigure to allow writes and enable only the button entities you intend to use.
+The integration resolves the device through `bluetooth.async_ble_device_from_address(..., connectable=True)`, so any ESPHome Bluetooth proxy with active connections in range works. Domain: `ble_studio`. Requires HA 2026.3+.
 
-Home Assistant 2026.3+ is the declared minimum for local brand assets. The technical domain remains `ble_studio` for profile/entry stability. HACS installs the custom component folder from the selected source release; the release ZIP is for manual installation, avoiding ambiguous HACS ZIP nesting.
+## Optional add-on
 
-### Manual/private installation
+[![Add add-on repository](https://my.home-assistant.io/badges/supervisor_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fnphil%2FBLE-Studio)
 
-Copy `custom_components/ble_studio/` into `/config/custom_components/ble_studio/` without overwriting unrelated integrations, or extract the release ZIP into `/config/` (it contains the `custom_components/ble_studio` prefix). Restart HA and use Add integration. Back up the existing folder before upgrading.
+Adds a **BLE Studio** sidebar panel (Ingress) serving the web workbench for importing btsnoop / JSON / CSV captures and reviewing them on a desktop. It requests no Bluetooth or DBus privileges. Image: `ghcr.io/nphil/ble-studio`.
 
-To revise a profile or change write opt-in, use the integration entry’s **Reconfigure** action. A different Bluetooth address requires a new entry, preventing identity collisions. Rotating addresses and devices requiring pairing/session authentication need additional device-specific work.
+## Development
 
-### ESPHome proxies and local adapters
+- **Android:** `cd android && ./gradlew :app:assembleDebug` (JDK 17, Android SDK 37). Unit tests: `./gradlew :app:testDebugUnitTest`. Release builds read the signing key from `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD`; the version comes from `BLE_STUDIO_VERSION` (`v1.2.3`).
+- **Integration / workbench:** `python -m unittest discover -s tests` and `npm test`.
+- **Branding:** `scripts/render-brand.sh` renders the PNGs from `branding/*.svg` (needs `rsvg-convert`).
+- **Release:** push a `v*` tag. `release.yml` publishes the integration ZIP and the add-on image; `android.yml` builds, signs and attaches the APK. Keep `addon/config.yaml` and `custom_components/ble_studio/manifest.json` versions aligned with the tag.
 
-Ensure the target device is in range of a Home Assistant Bluetooth source with active connections enabled. The integration resolves it with `bluetooth.async_ble_device_from_address(hass, address, connectable=True)` and uses the shared Bleak connection path. It does not create its own scanner or connect using a raw address outside HA.
+Research notes behind the design live in `docs/research/`.
 
-If a write fails: close the vendor app if the device allows one client, check proxy connection slots, active-proxy configuration, HA Bluetooth health, device power and address. A connection error is not proof that a payload is wrong. Connection establishment can retry; command writes are not automatically retried because a timed-out write may already have taken effect. No guarantee is made for pairing, large payloads or vendor session protocols.
+## What BLE Studio does not do
 
-## Optional Workbench add-on
-
-[![Add add-on repository](https://my.home-assistant.io/badges/supervisor_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fnphil%2FBLE-Explorer)
-
-After a matching image release exists, add the repository to Home Assistant’s app/add-on store, install BLE Studio and open its ingress panel. The ingress panel is the authenticated native-sidebar route, so an iframe panel is not needed. This requires a Supervisor-managed installation supporting add-ons; HA Container does not provide the add-on store.
-
-The add-on requests no Bluetooth/DBus/device privileges. It serves the UI; the separately installed integration uses HA Bluetooth. Browser-local session data belongs to the ingress origin/profile and is not synchronized to the hosted Site or another browser. The published GHCR package must be public for the Supervisor to pull it without registry credentials.
-
-## Docker
-
-```sh
-docker build -t ble-studio:dev .
-docker run --rm -p 127.0.0.1:8080:8080 ble-studio:dev
-```
-
-Open `http://localhost:8080`. The image serves `dist/` with unprivileged nginx. It contains no Home Assistant runtime or BLE driver. Do not expose it to a network without authentication/TLS: unlike the private hosted Site, the standalone container has **no built-in login**. HTTPS/secure-context requirements apply to browser hardware APIs.
-
-After a successful tagged workflow, use `ghcr.io/nphil/ble-studio:0.2.0` (amd64/arm64). OCI labels carry the project title and repository. GHCR does not have a portable per-image icon field; README branding and OCI metadata are supplied instead.
-
-## Development and release
-
-No frontend dependency install is required: Node 22+ runs `npm run dev`, `npm test` and `npm run check`. The source is plain ES modules and CSS; assets live in `dist/` intentionally. Python validator tests: `python -m unittest discover -s tests -p 'test_*.py'`. Python runtime modules require Home Assistant and are not a standalone CLI.
-
-Workflows test branch/PR changes. A `v*` tag runs tests, packages a manual integration ZIP and publishes a GitHub release plus multi-architecture GHCR image. Release/package permissions use the repository-scoped `GITHUB_TOKEN`. No personal access token is embedded. Keep the manifest, add-on version and release tag aligned. A published image is not a tested add-on release.
-
-Before tagging: validate with the target Home Assistant version; test clean install/reconfigure/unload; test a real safe device through an active proxy and local adapter; build/run the container; validate HACS install; verify add-on ingress, image pull and branding. The workbench’s Web Bluetooth path also needs physical tablet/desktop testing.
-
-Local `brand/icon.png` and `brand/logo.png` assets are included for HA. HACS’s own repository-list icon may depend on its version and branding support. SVG sources are in `dist/icon.svg` and `branding/logo.svg`; `scripts/render-brand.cjs` generates packaging PNGs using Sharp.
-
-## Privacy and security
-
-Capture files are parsed in the browser; no capture upload endpoint, analytics, remote font or telemetry is included. Browser Bluetooth uses the browser’s permission chooser. Notes, addresses and captures can identify devices or reveal private behavior: do not commit them. Use generated examples in tests/issues. Back up locally before deleting sessions or clearing browser data. Backups are unencrypted JSON; protect them accordingly.
-
-The runtime stores the submitted profile in HA config-entry data. It has no automatic discovery matcher, no arbitrary service execution endpoint, no cloud key extraction and no unattended install/update mechanism. Fixed payloads are not inherently safe: verify exact device/firmware semantics yourself.
-
-## Next development milestones
-
-1. Hardware-tested reference profile with reproducible evidence and HA installation tests.
-2. Read/notification capture through the installed HA integration, with explicitly scoped UI access and connection lifecycle management.
-3. Versioned device-specific decoders, authentication strategies, parameterized commands and entity state models.
-4. A named USB/sniffer transport after selecting and testing actual hardware; Android support must be demonstrated rather than inferred.
+It does not decode proprietary encryption, extract keys, bypass authentication or prove what a command means. *Device-tested* records **your** report. Do not replay unknown writes at locks, heaters, medical devices or machinery.
 
 ## References
 
-- [Home Assistant Bluetooth APIs](https://developers.home-assistant.io/docs/core/bluetooth/api/)
-- [ESPHome Bluetooth proxy](https://esphome.io/components/bluetooth_proxy/)
-- [Android HCI logging](https://source.android.com/docs/core/connect/bluetooth/verifying_debugging)
-- [Web Bluetooth](https://developer.chrome.com/docs/capabilities/bluetooth)
-- [Web Serial](https://developer.chrome.com/docs/capabilities/serial)
-- [Home Assistant local integration branding](https://developers.home-assistant.io/blog/2026/02/24/brands-proxy-api/)
+- [Home Assistant Bluetooth APIs](https://developers.home-assistant.io/docs/core/bluetooth/api/) · [ESPHome Bluetooth proxy](https://esphome.io/components/bluetooth_proxy/)
+- [Android HCI snoop logging](https://source.android.com/docs/core/connect/bluetooth/verifying_debugging) · [Shizuku API](https://github.com/RikkaApps/Shizuku-API)
+- [Bluetooth Core Specification](https://www.bluetooth.com/specifications/specs/core-specification/) (ATT / GATT)
 
-BLE Studio is independent and is not endorsed by Home Assistant, HACS, ESPHome or Bluetooth SIG.
+BLE Studio is independent and is not endorsed by Home Assistant, HACS, ESPHome, Bluetooth SIG or Google.

@@ -1,0 +1,45 @@
+[versions]
+agp = "9.4.0"
+kotlin = "2.4.20"
+composeBom = "2026.08.00"
+adaptive = "1.3.0"
+navigation = "2.10.0"
+lifecycle = "2.11.0"
+activity = "1.13.0"
+core = "1.19.0"
+datastore = "1.2.1"
+coroutines = "1.11.0"
+serialization = "1.11.0"
+shizuku = "13.1.5"
+junit = "4.13.2"
+
+[libraries]
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+compose-foundation = { module = "androidx.compose.foundation:foundation" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+compose-material3-window = { module = "androidx.compose.material3:material3-window-size-class" }
+compose-material-icons-extended = { module = "androidx.compose.material:material-icons-extended" }
+adaptive = { module = "androidx.compose.material3.adaptive:adaptive", version.ref = "adaptive" }
+adaptive-layout = { module = "androidx.compose.material3.adaptive:adaptive-layout", version.ref = "adaptive" }
+adaptive-navigation = { module = "androidx.compose.material3.adaptive:adaptive-navigation", version.ref = "adaptive" }
+navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation" }
+lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+lifecycle-service = { module = "androidx.lifecycle:lifecycle-service", version.ref = "lifecycle" }
+activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity" }
+core-ktx = { module = "androidx.core:core-ktx", version.ref = "core" }
+datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
+coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+shizuku-api = { module = "dev.rikka.shizuku:api", version.ref = "shizuku" }
+shizuku-provider = { module = "dev.rikka.shizuku:provider", version.ref = "shizuku" }
+junit = { module = "junit:junit", version.ref = "junit" }
+coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

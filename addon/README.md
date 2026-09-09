@@ -1,8 +1,8 @@
 # BLE Studio add-on
 
-This optional add-on serves the static profile viewer through Home Assistant
-Ingress. It is an analyzer/viewer only: it has no Bluetooth companion, host DBus
-access, privileged mode, host networking, or device mappings. Use the
-`ble_studio` custom integration for explicitly enabled, tested GATT
-writes.
-
+Serves the BLE Studio web workbench through Home Assistant Ingress as a
+**BLE Studio** sidebar panel. Use it to import btsnoop / JSON / CSV captures
+and review them from a desktop. It requests no Bluetooth, DBus, device or
+host-network privileges; the `ble_studio` custom integration performs the
+explicitly enabled, device-tested GATT writes. The Android app is the
+first-class capture tool.

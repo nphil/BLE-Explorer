@@ -8,7 +8,7 @@ files = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).decode().sp
 output = root / 'dist/ble-studio-source.zip'
 with ZipFile(output, 'w', ZIP_DEFLATED) as archive:
     for name in files:
-        if not name or name.startswith('.openai/') or name in {'dist/ble-studio-source.zip','dist/README.md'}:
+        if not name or name.startswith('.openai/') or name in {'dist/ble-studio-source.zip'}:
             continue
         archive.write(root / name, 'ble-studio/' + name)
 with ZipFile(output) as archive:
