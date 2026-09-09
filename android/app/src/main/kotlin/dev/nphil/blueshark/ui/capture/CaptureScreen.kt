@@ -104,7 +104,7 @@ fun CaptureScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, viewModel) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME && state.shellReady && state.capabilities.probed) viewModel.probe()
+            if (event == Lifecycle.Event.ON_RESUME && state.shellReady && state.capabilities.probed && !state.working) viewModel.probe()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }

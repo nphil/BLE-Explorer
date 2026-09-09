@@ -4,6 +4,7 @@ import android.bluetooth.BluetoothAdapter
 import android.content.Context
 import android.os.Build
 import dev.nphil.blueshark.model.CaptureEnvironment
+import dev.nphil.blueshark.shell.ShellResult
 import dev.nphil.blueshark.shell.ShellUnavailableException
 import dev.nphil.blueshark.shell.ShizukuGateway
 import kotlinx.coroutines.Dispatchers
@@ -55,6 +56,20 @@ data class SnoopModeResult(
     val detail: String,
     val deniedByPolicy: Boolean = false,
 )
+
+/** Pure decision behind [SnoopController.setSnoopMode]: what the setprop + getprop pair means. */
+fun classifySnoopWrite(mode: SnoopMode, write: ShellResult, read: ShellResult): SnoopModeResult {
+    val observed = read.text
+    val applied = observed.equals(mode.property, ignoreCase = true)
+    val detail = when {
+        applied -> "persist.bluetooth.btsnooplogmode = $observed"
+        !write.succeeded -> "setprop refused (${write.failure.lineSequence().first()}). " +
+            "Only system_server and the Bluetooth stack may write this property; a shell-UID Shizuku cannot. " +
+            "Use Developer options > Enable Bluetooth HCI snoop log."
+        else -> "setprop reported success but the property still reads \"$observed\""
+    }
+    return SnoopModeResult(mode, applied, observed, detail, deniedByPolicy = !applied && !write.succeeded)
+}
 
 data class BluetoothRestartResult(val ok: Boolean, val steps: List<String>, val error: String? = null)
 
@@ -152,15 +167,7 @@ class SnoopController(
         return try {
             val write = shell.run(Argv.setSnoopMode(mode), SHORT_TIMEOUT)
             val read = shell.run(Argv.GET_SNOOP_MODE, SHORT_TIMEOUT)
-            val observed = read.text
-            val applied = observed.equals(mode.property, ignoreCase = true)
-            val detail = when {
-                applied -> "persist.bluetooth.btsnooplogmode = $observed"
-                !write.succeeded -> "setprop refused (${write.failure.lineSequence().first()}). " +
-                    "Only system_server and the Bluetooth stack may write this property; a shell-UID Shizuku cannot."
-                else -> "setprop reported success but the property still reads \"$observed\""
-            }
-            SnoopModeResult(mode, applied, observed, detail, deniedByPolicy = !applied && !write.succeeded)
+            classifySnoopWrite(mode, write, read)
         } catch (e: ShellUnavailableException) {
             SnoopModeResult(mode, false, "", e.message ?: "Shell unavailable")
         }
