@@ -32,8 +32,14 @@ data class SnoopCapabilities(
     val shellIdentity: String = "",
     /** Raw `persist.bluetooth.btsnooplogmode`; empty when unset. */
     val snoopMode: String = "",
-    /** Every `getprop` line mentioning "snoop": what the vendor's Settings toggle actually wrote. */
+    /** `getprop` lines mentioning "snoop" plus `ro.debuggable`: what the Settings toggle actually wrote. */
     val snoopProperties: List<String> = emptyList(),
+    /**
+     * The newest "Snoop Logs ... " line the Bluetooth stack printed to logcat. The stack logs its
+     * mode every time the adapter starts, so this is ground truth from inside the stack — it does
+     * not depend on which property an OEM's Settings toggle writes or on what shell may read.
+     */
+    val stackSnoopLog: String = "",
     val logDirectory: String = "",
     val logDirectoryReadable: Boolean = false,
     val bluetoothManagerShell: Boolean = false,
@@ -42,17 +48,31 @@ data class SnoopCapabilities(
     val probedAtEpochMs: Long = 0,
     val error: String? = null,
 ) {
+    /** Mode the stack announced at its last start: "full", "filtered", "disabled", or "" if never seen. */
+    val stackSnoopMode: String
+        get() = when {
+            stackSnoopLog.contains("full mode enabled") -> "full"
+            stackSnoopLog.contains("filtered mode enabled") -> "filtered"
+            stackSnoopLog.contains("Snoop Logs disabled") -> "disabled"
+            else -> ""
+        }
+
     /**
-     * The mode the stack will use: `btsnooplogmode` wins; when it is unset the stack falls back
-     * to `btsnoopdefaultmode`; the pre-Android-9 boolean `btsnoopenable=true` meant full logging.
+     * What the stack would compute, mirroring `SnoopLogger::GetBtSnoopMode`: `btsnooplogmode` if
+     * set, otherwise `btsnoopdefaultmode` (falling back to filtered) but only on debuggable builds,
+     * otherwise disabled. Blank when the property is unreadable and nothing else applies.
      */
-    val effectiveSnoopMode: String
+    val propertySnoopMode: String
         get() {
             if (snoopMode.isNotBlank()) return snoopMode
-            propertyValue("persist.bluetooth.btsnoopdefaultmode")?.takeIf { it.isNotBlank() }?.let { return it }
-            if (propertyValue("persist.bluetooth.btsnoopenable") == "true") return "full"
+            if (propertyValue("ro.debuggable") == "1") {
+                return propertyValue("persist.bluetooth.btsnoopdefaultmode")?.takeIf { it.isNotBlank() } ?: "filtered"
+            }
             return ""
         }
+
+    /** The stack's own announcement wins; the property view is the fallback before any restart. */
+    val effectiveSnoopMode: String get() = stackSnoopMode.ifBlank { propertySnoopMode }
     val snoopModeIsFull: Boolean get() = effectiveSnoopMode.equals("full", ignoreCase = true)
     val probed: Boolean get() = probedAtEpochMs > 0
 
@@ -61,9 +81,15 @@ data class SnoopCapabilities(
             ?.substringAfter("]: [")?.removeSuffix("]")
 }
 
-/** Filters `getprop` output down to snoop-related lines, sorted for stable display. */
+/** Filters `getprop` output down to snoop-related lines (plus `ro.debuggable`), sorted for stable display. */
 fun snoopPropertyLines(getpropOutput: String): List<String> =
-    getpropOutput.lineSequence().map { it.trim() }.filter { it.contains("snoop", ignoreCase = true) }.sorted().toList()
+    getpropOutput.lineSequence().map { it.trim() }
+        .filter { it.contains("snoop", ignoreCase = true) || it.startsWith("[ro.debuggable]") }
+        .sorted().toList()
+
+/** Newest stack "Snoop Logs" announcement in a `logcat -d` dump, or "" when the stack never said. */
+fun latestStackSnoopLine(logcatOutput: String): String =
+    logcatOutput.lineSequence().lastOrNull { it.contains("Snoop Logs") }?.trim() ?: ""
 
 /**
  * [deniedByPolicy] is true when `setprop` itself was refused. On every Android build the property
@@ -151,6 +177,8 @@ class SnoopController(
         fun cat(path: String) = listOf("cat", path)
         /** Whole property table; filtered in-app to the snoop keys, because vendors add their own. */
         val ALL_PROPS = listOf("getprop")
+        /** Dump (not follow) of the stack's own "Snoop Logs ..." announcements; `-e` filters by regex. */
+        val LOGCAT_SNOOP_MODE = listOf("logcat", "-d", "-b", "main,system", "-v", "time", "-e", "Snoop Logs")
 
         val LOGCAT = listOf(
             "logcat", "-v", "epoch", "-b", "main,system",
@@ -169,19 +197,20 @@ class SnoopController(
             val dumpsysHelp = shell.run(Argv.DUMPSYS_HELP, SHORT_TIMEOUT)
             val managerHelp = shell.run(Argv.BLUETOOTH_MANAGER_HELP, SHORT_TIMEOUT)
             val bugreportz = shell.run(Argv.BUGREPORTZ_VERSION, SHORT_TIMEOUT)
+            val stackLog = shell.run(Argv.LOGCAT_SNOOP_MODE, SHORT_TIMEOUT)
             SnoopCapabilities(
                 shellIdentity = identity.text.ifBlank { identity.failure },
                 snoopProperties = snoopPropertyLines(allProps.stdout),
                 snoopMode = mode.text,
+                stackSnoopLog = latestStackSnoopLine(stackLog.stdout),
                 logDirectory = listing.text.ifBlank { listing.failure },
                 logDirectoryReadable = listing.succeeded && listing.text.isNotBlank(),
                 bluetoothManagerShell = managerHelp.succeeded || managerHelp.text.contains("enable"),
                 bluetoothManagerDumpsys = dumpsysHelp.succeeded || dumpsysHelp.text.isNotBlank(),
-                bugreportz = if (bugreportz.succeeded && bugreportz.text.isNotBlank()) {
-                    bugreportz.text
-                } else {
-                    "not available (${bugreportz.failure})"
-                },
+                // `bugreportz -v` prints its version but exits non-zero on some builds; the version is what counts.
+                bugreportz = bugreportz.text.takeIf { it.matches(Regex("""\d+(\.\d+)*""")) }
+                    ?: bugreportz.text.takeIf { bugreportz.succeeded && it.isNotBlank() }
+                    ?: "not available (${bugreportz.failure})",
                 probedAtEpochMs = System.currentTimeMillis(),
             )
         } catch (e: ShellUnavailableException) {

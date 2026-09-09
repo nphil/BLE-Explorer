@@ -10,35 +10,64 @@ class SnoopCapabilitiesTest {
     private val getprop = """
         [persist.bluetooth.btsnoopdefaultmode]: [full]
         [ro.build.fingerprint]: [Xiaomi/whatever]
-        [persist.bluetooth.btsnoopenable]: [false]
+        [ro.debuggable]: [0]
+        [persist.vendor.service.bt.adv_snoop]: []
         [persist.sys.usb.config]: [mtp,adb]
     """.trimIndent()
 
+    private val logcat = """
+        09-08 23:30:01.100  I bluetooth: Snoop Logs disabled
+        09-08 23:30:01.101  I bluetooth: something else
+        09-08 23:41:12.400  I bluetooth: Snoop Logs full mode enabled
+    """.trimIndent()
+
     @Test
-    fun `logmode wins over defaultmode`() {
+    fun `stack announcement beats the property view`() {
+        val caps = SnoopCapabilities(
+            snoopMode = "",
+            snoopProperties = snoopPropertyLines(getprop),
+            stackSnoopLog = latestStackSnoopLine(logcat),
+        )
+        assertEquals("full", caps.stackSnoopMode)
+        assertTrue(caps.snoopModeIsFull)
+    }
+
+    @Test
+    fun `newest announcement wins`() {
+        val reversed = logcat.lines().reversed().joinToString("\n")
+        assertEquals("disabled", SnoopCapabilities(stackSnoopLog = latestStackSnoopLine(reversed)).stackSnoopMode)
+    }
+
+    @Test
+    fun `without an announcement the logmode property decides`() {
         val caps = SnoopCapabilities(snoopMode = "filtered", snoopProperties = snoopPropertyLines(getprop))
         assertEquals("filtered", caps.effectiveSnoopMode)
         assertFalse(caps.snoopModeIsFull)
     }
 
     @Test
-    fun `unset logmode falls back to defaultmode`() {
-        val caps = SnoopCapabilities(snoopMode = "", snoopProperties = snoopPropertyLines(getprop))
-        assertEquals("full", caps.effectiveSnoopMode)
-        assertTrue(caps.snoopModeIsFull)
-    }
+    fun `defaultmode only applies on debuggable builds`() {
+        val userBuild = SnoopCapabilities(snoopProperties = snoopPropertyLines(getprop))
+        assertEquals("", userBuild.effectiveSnoopMode)
 
-    @Test
-    fun `legacy boolean enable means full when nothing else is set`() {
-        val caps = SnoopCapabilities(snoopProperties = listOf("[persist.bluetooth.btsnoopenable]: [true]"))
-        assertTrue(caps.snoopModeIsFull)
-        assertFalse(SnoopCapabilities(snoopProperties = listOf("[persist.bluetooth.btsnoopenable]: [false]")).snoopModeIsFull)
-    }
-
-    @Test
-    fun `property filter keeps only snoop lines`() {
+        val debuggable = SnoopCapabilities(
+            snoopProperties = snoopPropertyLines(getprop.replace("[ro.debuggable]: [0]", "[ro.debuggable]: [1]")),
+        )
+        assertEquals("full", debuggable.effectiveSnoopMode)
         assertEquals(
-            listOf("[persist.bluetooth.btsnoopdefaultmode]: [full]", "[persist.bluetooth.btsnoopenable]: [false]"),
+            "filtered",
+            SnoopCapabilities(snoopProperties = listOf("[ro.debuggable]: [1]")).effectiveSnoopMode,
+        )
+    }
+
+    @Test
+    fun `property filter keeps snoop lines and the debuggable flag`() {
+        assertEquals(
+            listOf(
+                "[persist.bluetooth.btsnoopdefaultmode]: [full]",
+                "[persist.vendor.service.bt.adv_snoop]: []",
+                "[ro.debuggable]: [0]",
+            ),
             snoopPropertyLines(getprop),
         )
     }

@@ -208,8 +208,9 @@ private fun LazyListScope.captureSteps(
         StepCard(1, CaptureStep.LOGGING, state) {
             Text(
                 text = "Only \"full\" keeps whole ACL payloads. \"filtered\" truncates exactly the vendor bytes you are after. " +
-                    "Without root, Android lets only Settings change this: Developer options > " +
-                    "\"Enable Bluetooth HCI snoop log\" > Enabled. Come back and the step turns green.",
+                    "Without root only Settings may change this: Developer options > \"Enable Bluetooth HCI snoop log\" > " +
+                    "Enabled (not \"Enabled Filtered\"). The stack reads the setting only when it starts, so run step 2 " +
+                    "afterwards; the step turns green once the stack itself reports full mode.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -405,6 +406,11 @@ private fun CapabilityCard(state: CaptureUiState, viewModel: CaptureViewModel) {
                     } else {
                         MaterialTheme.colorScheme.error
                     },
+                )
+                FactRow(
+                    label = "Stack reports",
+                    value = capabilities.stackSnoopLog.ifBlank { "(no \"Snoop Logs\" line in logcat yet; restart Bluetooth in step 2, then re-probe)" },
+                    mono = true,
                 )
                 FactRow(
                     label = "Snoop properties",
