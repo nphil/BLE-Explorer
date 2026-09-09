@@ -16,6 +16,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
+import java.util.Locale
+import java.text.SimpleDateFormat
 import java.io.FileOutputStream
 import java.io.FilterInputStream
 import java.io.ByteArrayInputStream
@@ -102,6 +104,25 @@ fun serviceSnoopSetting(dumpsysOutput: String): String =
     Regex("""sSnoopLogSettingAtEnable\s*=\s*(\S+)""").find(dumpsysOutput)?.groupValues?.get(1) ?: ""
 
 /** Filters `getprop` output down to snoop-related lines (plus `ro.debuggable`), sorted for stable display. */
+/** `..._260909_172025.log` -> epoch ms. */
+private val SNOOP_NAME_STAMP = Regex("""(\d{6})[_-](\d{6})""")
+
+/**
+ * How recent a bugreport entry is, for picking between several captures in one zip.
+ * The name's own `yyMMdd_HHmmss` wins when present (zip entries frequently carry the
+ * bugreport's collection time rather than the file's), otherwise the entry timestamp.
+ */
+fun snoopEntryStampMs(name: String, entryTimeMs: Long): Long {
+    val match = SNOOP_NAME_STAMP.find(name.substringAfterLast('/'))
+    if (match != null) {
+        val parser = SimpleDateFormat("yyMMdd_HHmmss", Locale.US)
+        runCatching { parser.parse("${match.groupValues[1]}_${match.groupValues[2]}") }
+            .getOrNull()
+            ?.let { return it.time }
+    }
+    return if (entryTimeMs > 0) entryTimeMs else Long.MIN_VALUE + 1
+}
+
 fun snoopPropertyLines(getpropOutput: String): List<String> =
     getpropOutput.lineSequence().map { it.trim() }
         .filter { it.contains("snoop", ignoreCase = true) || it.startsWith("[ro.debuggable]") }
@@ -608,6 +629,7 @@ class SnoopController(
         var snoopFile: File? = null
         var snoopEntry: String? = null
         var snoopIsRotated = true
+        var snoopStamp = Long.MIN_VALUE
         var snooz: ByteArray? = null
         var snoozEntry: String? = null
         var entries = 0
@@ -623,7 +645,12 @@ class SnoopController(
                     related += name + if (entry.size >= 0) " (${entry.size} B)" else ""
                 }
                 val rotated = name.endsWith(".last") || name.contains(".last.")
-                val wantSnoop = smellsBluetooth && !name.endsWith(".txt", ignoreCase = true) && (snoopFile == null || (snoopIsRotated && !rotated))
+                // OEMs that timestamp the filename leave several captures in one bugreport, one
+                // per adapter start. The newest holds the traffic the operator just produced;
+                // taking the first match silently hands back a log that ends at the last restart.
+                val entryStamp = snoopEntryStampMs(name, entry.time)
+                val wantSnoop = smellsBluetooth && !name.endsWith(".txt", ignoreCase = true) &&
+                    (snoopFile == null || (snoopIsRotated && !rotated) || (rotated == snoopIsRotated && entryStamp > snoopStamp))
                 when {
                     wantSnoop -> {
                         val head = ByteArray(BTSNOOP_MAGIC.size)
@@ -636,6 +663,7 @@ class SnoopController(
                                 snoopFile = target
                                 snoopEntry = name
                                 snoopIsRotated = rotated
+                                snoopStamp = entryStamp
                             } else {
                                 target.delete()
                             }
