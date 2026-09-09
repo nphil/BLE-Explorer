@@ -1,5 +1,11 @@
 package dev.nphil.blueshark.ui.capture
 
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.Lifecycle
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Spacer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -93,6 +99,15 @@ fun CaptureScreen(
 
     LaunchedEffect(viewModel) {
         viewModel.messages.collect { message -> snackbarHostState.showSnackbar(message) }
+    }
+    // Coming back from Developer options: read the property again so step 1 reflects the toggle.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && state.shellReady && state.capabilities.probed) viewModel.probe()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -192,16 +207,31 @@ private fun LazyListScope.captureSteps(
     item(key = "step-logging") {
         StepCard(1, CaptureStep.LOGGING, state) {
             Text(
-                text = "Only \"full\" keeps whole ACL payloads. \"filtered\" truncates exactly the vendor bytes you are after.",
+                text = "Only \"full\" keeps whole ACL payloads. \"filtered\" truncates exactly the vendor bytes you are after. " +
+                    "Without root, Android lets only Settings change this: Developer options > " +
+                    "\"Enable Bluetooth HCI snoop log\" > Enabled. Come back and the step turns green.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             state.snoopModeDetail?.let { Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = MonoFamily) }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = { viewModel.setSnoopMode(SnoopMode.FULL) },
-                    enabled = state.shellReady && !state.working,
-                ) { Text("Enable full logging") }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (state.snoopDenied) {
+                    Button(onClick = viewModel::openDeveloperOptions) {
+                        Icon(Icons.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Open Developer options")
+                    }
+                    OutlinedButton(
+                        onClick = { viewModel.setSnoopMode(SnoopMode.FULL) },
+                        enabled = state.shellReady && !state.working,
+                    ) { Text("Retry setprop") }
+                } else {
+                    Button(
+                        onClick = { viewModel.setSnoopMode(SnoopMode.FULL) },
+                        enabled = state.shellReady && !state.working,
+                    ) { Text("Enable full logging") }
+                    OutlinedButton(onClick = viewModel::openDeveloperOptions) { Text("Developer options") }
+                }
             }
         }
     }
@@ -231,10 +261,15 @@ private fun LazyListScope.captureSteps(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            OutlinedButton(
-                onClick = { viewModel.setSnoopMode(SnoopMode.DISABLED) },
-                enabled = state.shellReady && !state.working,
-            ) { Text("Disable HCI logging") }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { viewModel.setSnoopMode(SnoopMode.DISABLED) },
+                    enabled = state.shellReady && !state.working,
+                ) { Text("Disable HCI logging") }
+                if (state.snoopDenied) {
+                    OutlinedButton(onClick = viewModel::openDeveloperOptions) { Text("Developer options") }
+                }
+            }
         }
     }
     if (state.attempts.isNotEmpty() || state.summary != null || state.error != null) {

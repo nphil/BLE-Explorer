@@ -42,7 +42,19 @@ data class SnoopCapabilities(
     val probed: Boolean get() = probedAtEpochMs > 0
 }
 
-data class SnoopModeResult(val requested: SnoopMode, val applied: Boolean, val observed: String, val detail: String)
+/**
+ * [deniedByPolicy] is true when `setprop` itself was refused. On every Android build the property
+ * is SELinux-labelled `bluetooth_prop`, writable only by `system_server` and the Bluetooth stack,
+ * so a shell-UID Shizuku can never set it; the Developer options toggle (which runs as system)
+ * is the supported way and writes the very same property.
+ */
+data class SnoopModeResult(
+    val requested: SnoopMode,
+    val applied: Boolean,
+    val observed: String,
+    val detail: String,
+    val deniedByPolicy: Boolean = false,
+)
 
 data class BluetoothRestartResult(val ok: Boolean, val steps: List<String>, val error: String? = null)
 
@@ -124,7 +136,11 @@ class SnoopController(
                 logDirectoryReadable = listing.succeeded && listing.text.isNotBlank(),
                 bluetoothManagerShell = managerHelp.succeeded || managerHelp.text.contains("enable"),
                 bluetoothManagerDumpsys = dumpsysHelp.succeeded || dumpsysHelp.text.isNotBlank(),
-                bugreportz = bugreportz.text.takeIf { bugreportz.succeeded && it.isNotBlank() },
+                bugreportz = if (bugreportz.succeeded && bugreportz.text.isNotBlank()) {
+                    bugreportz.text
+                } else {
+                    "not available (${bugreportz.failure})"
+                },
                 probedAtEpochMs = System.currentTimeMillis(),
             )
         } catch (e: ShellUnavailableException) {
@@ -140,10 +156,11 @@ class SnoopController(
             val applied = observed.equals(mode.property, ignoreCase = true)
             val detail = when {
                 applied -> "persist.bluetooth.btsnooplogmode = $observed"
-                !write.succeeded -> "setprop failed: ${write.failure}"
+                !write.succeeded -> "setprop refused (${write.failure.lineSequence().first()}). " +
+                    "Only system_server and the Bluetooth stack may write this property; a shell-UID Shizuku cannot."
                 else -> "setprop reported success but the property still reads \"$observed\""
             }
-            SnoopModeResult(mode, applied, observed, detail)
+            SnoopModeResult(mode, applied, observed, detail, deniedByPolicy = !applied && !write.succeeded)
         } catch (e: ShellUnavailableException) {
             SnoopModeResult(mode, false, "", e.message ?: "Shell unavailable")
         }

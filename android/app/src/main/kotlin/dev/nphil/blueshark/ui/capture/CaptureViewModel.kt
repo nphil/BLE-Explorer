@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.provider.Settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -120,6 +121,8 @@ data class CaptureUiState(
     val collectedFrom: String? = null,
     val artifacts: List<String> = emptyList(),
     val snoopModeDetail: String? = null,
+    /** Shell may not write the snoop property; the user must flip the Developer options toggle. */
+    val snoopDenied: Boolean = false,
     val restartSteps: List<String> = emptyList(),
     val logcatRunning: Boolean = false,
     val logcatFile: String? = null,
@@ -240,6 +243,18 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
 
     fun openShizukuDownload() = openUrl("https://shizuku.rikka.app/download/")
 
+    /**
+     * Developer options is the only non-root way to change the snoop mode: its
+     * "Enable Bluetooth HCI snoop log" toggle runs as system and writes the same property.
+     * The screen re-probes on resume, so the step turns green as soon as getprop reads "full".
+     */
+    fun openDeveloperOptions() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { appContext.startActivity(intent) }.onFailure {
+            report("Developer options are hidden: Settings > About tablet > tap Build number 7 times, then retry")
+        }
+    }
+
     private fun openUrl(url: String) {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching { appContext.startActivity(intent) }.onFailure { report("No app can open $url") }
@@ -256,6 +271,7 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
                 current.copy(
                     probing = false,
                     capabilities = capabilities,
+                    snoopDenied = current.snoopDenied && !capabilities.snoopModeIsFull,
                     completed = if (capabilities.snoopModeIsFull) {
                         current.completed + CaptureStep.LOGGING
                     } else {
@@ -275,11 +291,18 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
         _state.update { current ->
             current.copy(
                 snoopModeDetail = result.detail,
+                snoopDenied = result.deniedByPolicy,
                 capabilities = current.capabilities.copy(snoopMode = result.observed.ifBlank { "(unset)" }),
                 completed = if (result.applied) current.completed + step else current.completed - step,
             )
         }
-        report(if (result.applied) "Snoop mode is now ${result.observed}" else result.detail)
+        report(
+            when {
+                result.applied -> "Snoop mode is now ${result.observed}"
+                result.deniedByPolicy -> "Shell cannot change the snoop mode here; use the Developer options toggle"
+                else -> result.detail
+            },
+        )
     }
 
     fun restartBluetooth() = runExclusive("Restarting Bluetooth") {
