@@ -63,9 +63,10 @@ object NtfyBudget {
 
     /**
      * What may leave the device: the local clipboard copy is verbatim, the ntfy body is not.
-     * Drops the `settings secure` section entirely (device identifiers, bonded names) and masks
-     * MAC-shaped tokens and android_id everywhere else. The last octet is kept so two devices
-     * stay distinguishable in a conversation without the address being reconstructible.
+     * Drops the `settings secure` section entirely (device identifiers) and masks MAC-shaped
+     * tokens and android_id everywhere else; the last octet is kept so two devices stay
+     * distinguishable without the address being reconstructible. Human-readable names (bonded
+     * device names, control labels) are deliberately kept: they are what makes a log readable.
      */
     fun redact(body: String): String =
         body.replace(SECURE_SECTION, "## settings secure\n(redacted before upload)\n")

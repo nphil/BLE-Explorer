@@ -113,22 +113,28 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
      * attachments anyway; naming the file keeps it in one piece and one budget slot).
      */
     suspend fun sendNow(title: String, body: String): String =
-        publish(settings.first(), title, NtfyBudget.redact(body), filename = "blueshark-diagnostics.txt")
+        publish(settings.first(), title, NtfyBudget.redact(body), filename = "blueshark-diagnostics.txt").detail
 
     private fun startFlusher() {
         if (flusher?.isActive == true) return
         flusher = scope.launch {
             while (true) {
                 delay(NtfyBudget.MIN_INTERVAL_MS)
-                val batch = lock.withLock {
+                // Peek: lines leave the queue only after ntfy accepted them, so a flaky network
+                // defers a batch instead of losing it.
+                val (batch, taken) = lock.withLock {
                     val (body, rest) = NtfyBudget.takeBatch(pending.toList())
-                    if (body.isEmpty()) return@withLock null
-                    pending.clear(); pending.addAll(rest)
-                    _status.update { it.copy(queuedLines = pending.size) }
-                    body
-                } ?: continue
+                    body to (pending.size - rest.size)
+                }
+                if (batch.isEmpty()) continue
                 val result = publish(settings.first(), "BlueShark log", NtfyBudget.redact(batch))
-                _status.update { it.copy(lastResult = result) }
+                if (result.sent) {
+                    lock.withLock {
+                        repeat(taken) { pending.removeFirst() }
+                        _status.update { it.copy(queuedLines = pending.size) }
+                    }
+                }
+                _status.update { it.copy(lastResult = result.detail) }
             }
         }
     }
@@ -139,25 +145,28 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
     }
 
 
-    private suspend fun publish(s: DebugSettings, title: String, body: String, filename: String? = null): String {
-        if (!s.ntfyEnabled) return "ntfy sink is off"
+    private class Outcome(val sent: Boolean, val detail: String)
+
+    /**
+     * One HTTP publish. The daily counter is charged only after ntfy accepted the message; the
+     * spacing rule is enforced against the last *attempt* so a failing server is not hammered.
+     */
+    private suspend fun publish(s: DebugSettings, title: String, body: String, filename: String? = null): Outcome {
+        if (!s.ntfyEnabled) return Outcome(false, "ntfy sink is off")
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         val now = System.currentTimeMillis()
-        var allowed = false
-        store.edit { prefs ->
-            val counter = NtfyBudget.Counter(prefs[KEY_DAY] ?: "", prefs[KEY_SENT_TODAY] ?: 0)
-            val (ok, next) = NtfyBudget.admit(counter, today, now, lastSendMs)
-            allowed = ok
-            prefs[KEY_DAY] = next.dayKey
-            prefs[KEY_SENT_TODAY] = next.sentToday
-            _status.update { it.copy(sentToday = next.sentToday) }
-        }
+        val prefs = store.data.first()
+        val counter = NtfyBudget.Counter(prefs[KEY_DAY] ?: "", prefs[KEY_SENT_TODAY] ?: 0)
+        val (allowed, next) = NtfyBudget.admit(counter, today, now, lastSendMs)
         if (!allowed) {
-            return if (now - lastSendMs < NtfyBudget.MIN_INTERVAL_MS) "rate-limited; try again in a few seconds"
-            else "daily cap of ${NtfyBudget.DAILY_CAP} messages reached; resumes tomorrow"
+            return Outcome(
+                false,
+                if (now - lastSendMs < NtfyBudget.MIN_INTERVAL_MS) "rate-limited; try again in a few seconds"
+                else "daily cap of ${NtfyBudget.DAILY_CAP} messages reached; resumes tomorrow",
+            )
         }
         lastSendMs = now
-        return withContext(Dispatchers.IO) {
+        val outcome = withContext(Dispatchers.IO) {
             try {
                 val conn = URL(s.topicUrl).openConnection() as HttpURLConnection
                 conn.requestMethod = "POST"
@@ -171,11 +180,20 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
                 conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
                 val code = conn.responseCode
                 conn.disconnect()
-                if (code in 200..299) "sent ${body.length} chars at ${stamp.format(Date())}" else "ntfy HTTP $code"
+                if (code in 200..299) Outcome(true, "sent ${body.length} chars at ${stamp.format(Date())}")
+                else Outcome(false, "ntfy HTTP $code")
             } catch (e: IOException) {
-                "ntfy unreachable: ${e.message}"
+                Outcome(false, "ntfy unreachable: ${e.message}")
             }
         }
+        if (outcome.sent) {
+            store.edit {
+                it[KEY_DAY] = next.dayKey
+                it[KEY_SENT_TODAY] = next.sentToday
+            }
+            _status.update { it.copy(sentToday = next.sentToday) }
+        }
+        return outcome
     }
 
     private companion object {
