@@ -733,11 +733,15 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
         // operator knows which address is the gadget.
         val onlyPeer = outcome.summary.connectionsByPeer.keys.singleOrNull()
         val peers = outcome.summary.connectionsByPeer.keys
-        // Handles are reused across connections, so this is the last peer that owned a handle in
-        // this capture; good enough to keep another peripheral's traffic out of the correlation.
-        val peerByHandle = HashMap<Int, String>()
+        // Handles are reused across connections. A handle two peers both owned in this capture
+        // cannot be attributed from the summary alone, so it stays unknown (the correlator then
+        // marks anything on it "peer unknown") rather than being handed to whichever peer came
+        // last - which would be exactly the cross-peer leak this provenance exists to prevent.
+        val peerByHandle = HashMap<Int, String?>()
         outcome.summary.connectionsByPeer.forEach { (address, summary) ->
-            summary.handles.forEach { peerByHandle[it] = address }
+            summary.handles.forEach { handle ->
+                peerByHandle[handle] = if (handle in peerByHandle) null else address
+            }
         }
         val saved = persist { session ->
             val known = session.events.mapTo(HashSet(session.events.size), BleEvent::id)

@@ -123,6 +123,17 @@ fun bugreportSnoopFileName(stamp: Long, entryName: String, rotated: Boolean): St
     return "bugreport-$stamp-$slug${if (rotated) "-last" else ""}.log"
 }
 
+/**
+ * Chooses the capture to parse first and the order the rest are merged in: the live file beats
+ * any `.last` rotation, the newest stamp wins among equals, and the losers come back oldest first
+ * so their records merge in time order. Pure so the rule can be tested against the same code the
+ * zip scan runs.
+ */
+fun rankSnoopCandidates(candidates: List<SnoopController.SnoopCandidate>): Pair<SnoopController.SnoopCandidate?, List<SnoopController.SnoopCandidate>> {
+    val ordered = candidates.sortedWith(compareBy({ it.rotated }, { -it.stamp }))
+    return ordered.firstOrNull() to ordered.drop(1).sortedBy { it.stamp }
+}
+
 fun snoopEntryStampMs(name: String, entryTimeMs: Long): Long {
     val match = SNOOP_NAME_STAMP.find(name.substringAfterLast('/'))
     if (match != null) {
@@ -652,7 +663,7 @@ class SnoopController(
     )
 
     /** One capture found inside a bugreport, before the newest of them has been chosen. */
-    private class SnoopCandidate(val file: File, val entry: String, val rotated: Boolean, val stamp: Long)
+    class SnoopCandidate(val file: File, val entry: String, val rotated: Boolean, val stamp: Long)
 
     /**
      * One streaming pass over the bugreport zip. Any entry that starts with the btsnoop magic is
@@ -713,9 +724,7 @@ class SnoopController(
                 zin.closeEntry()
             }
         }
-        val ordered = candidates.sortedWith(compareBy({ it.rotated }, { -it.stamp }))
-        val primary = ordered.firstOrNull()
-        val older = ordered.drop(1).sortedBy { it.stamp }
+        val (primary, older) = rankSnoopCandidates(candidates)
         return ZipFindings(
             primary?.file,
             older.map { it.file },

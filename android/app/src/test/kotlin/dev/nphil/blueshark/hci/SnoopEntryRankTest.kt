@@ -56,13 +56,12 @@ class BugreportSnoopFileNameTest {
  * pass, never by skipping entries during it.
  */
 class SnoopCandidateOrderTest {
-    private data class Candidate(val entry: String, val rotated: Boolean) {
-        val stamp = snoopEntryStampMs(entry, 0L)
-    }
+    private fun Candidate(entry: String, rotated: Boolean) =
+        SnoopController.SnoopCandidate(java.io.File(entry), entry, rotated, snoopEntryStampMs(entry, 0L))
 
-    private fun pick(candidates: List<Candidate>): Pair<String, List<String>> {
-        val ordered = candidates.sortedWith(compareBy({ it.rotated }, { -it.stamp }))
-        return ordered.first().entry to ordered.drop(1).sortedBy { it.stamp }.map { it.entry }
+    private fun pick(candidates: List<SnoopController.SnoopCandidate>): Pair<String, List<String>> {
+        val (primary, older) = rankSnoopCandidates(candidates)
+        return primary!!.entry to older.map { it.entry }
     }
 
     @Test
