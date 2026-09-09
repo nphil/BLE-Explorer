@@ -27,3 +27,26 @@ class SnoopEntryRankTest {
         assertTrue(rank("FS/data/misc/bluetooth/logs/btsnoop_hci_260909_163625.log") > rank("btsnoop_hci.log", 0L))
     }
 }
+
+class BugreportSnoopFileNameTest {
+    @Test
+    fun `two captures in one bugreport get two files`() {
+        val a = bugreportSnoopFileName(1L, "FS/data/misc/bluetooth/logs/btsnoop_hci_260909_163625.log", false)
+        val b = bugreportSnoopFileName(1L, "FS/data/misc/bluetooth/logs/btsnoop_hci_260909_172025.log", false)
+        assertTrue("$a must differ from $b", a != b)
+        assertTrue(a.contains("163625") && b.contains("172025"))
+    }
+
+    @Test
+    fun `a rotation is distinguishable from the live file of the same name`() {
+        val live = bugreportSnoopFileName(1L, "FS/data/misc/bluetooth/logs/btsnoop_hci.log", false)
+        val last = bugreportSnoopFileName(1L, "FS/data/misc/bluetooth/logs/btsnoop_hci.log", true)
+        assertTrue(live != last)
+    }
+
+    @Test
+    fun `path separators and spaces never escape the cache directory`() {
+        val name = bugreportSnoopFileName(1L, "FS/../../etc/bt snoop.log", false)
+        assertTrue(name, !name.contains('/') && !name.contains(' '))
+    }
+}

@@ -105,6 +105,7 @@ fun serviceSnoopSetting(dumpsysOutput: String): String =
 
 /** Filters `getprop` output down to snoop-related lines (plus `ro.debuggable`), sorted for stable display. */
 /** `..._260909_172025.log` -> epoch ms. */
+private val SAFE_NAME = Regex("[^A-Za-z0-9._-]")
 private val SNOOP_NAME_STAMP = Regex("""(\d{6})[_-](\d{6})""")
 
 /**
@@ -112,6 +113,16 @@ private val SNOOP_NAME_STAMP = Regex("""(\d{6})[_-](\d{6})""")
  * The name's own `yyMMdd_HHmmss` wins when present (zip entries frequently carry the
  * bugreport's collection time rather than the file's), otherwise the entry timestamp.
  */
+/**
+ * Cache filename for one capture extracted from a bugreport. Derived from the entry name so two
+ * captures in the same zip (the adapter restarted mid-session) never collide: a shared name would
+ * silently overwrite the earlier file and leave two references to the same bytes.
+ */
+fun bugreportSnoopFileName(stamp: Long, entryName: String, rotated: Boolean): String {
+    val slug = entryName.substringAfterLast('/').replace(SAFE_NAME, "_").take(48)
+    return "bugreport-$stamp-$slug${if (rotated) "-last" else ""}.log"
+}
+
 fun snoopEntryStampMs(name: String, entryTimeMs: Long): Long {
     val match = SNOOP_NAME_STAMP.find(name.substringAfterLast('/'))
     if (match != null) {
@@ -679,7 +690,10 @@ class SnoopController(
                         val head = ByteArray(BTSNOOP_MAGIC.size)
                         val read = readFully(zin, head)
                         if (read == head.size && head.contentEquals(BTSNOOP_MAGIC)) {
-                            val target = File(cacheRoot, "bugreport-$stamp-btsnoop${if (rotated) "-last" else ""}.log")
+                            // One file per zip entry: several captures can qualify (the adapter
+                            // restarts mid-session), and a shared name would let the last copy
+                            // overwrite the earlier one and alias it into the merge list.
+                            val target = File(cacheRoot, bugreportSnoopFileName(stamp, name, rotated))
                             val bytes = copyEntry(SequenceInputStream(ByteArrayInputStream(head), NonClosing(zin)), target, MAX_SNOOP_BYTES)
                             if (bytes > head.size) {
                                 snoopFile?.takeIf { it != target }?.let { previous ->
@@ -857,7 +871,6 @@ class SnoopController(
         val BLUETOOTH_ENTRY = Regex("""(?i)snoop|bluetooth|/bt[_/]|btsnoop|hci|\.cfa$""")
         const val MAX_RELATED_ENTRIES = 40
         val BUGREPORT_PATH = Regex("^/[A-Za-z0-9._/@+-]{1,255}\\.zip$")
-        val SAFE_NAME = Regex("[^A-Za-z0-9._-]")
 
         /** btsnooz is Android's in-memory summary, not the on-disk log; say so before conclusions. */
         const val BTSNOOZ_CAVEAT = "These events came from Android's in-memory btsnooz summary: it is a bounded " +
