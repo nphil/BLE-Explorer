@@ -649,7 +649,7 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
             report(result.error ?: "Collection failed: see the report below")
             return@runExclusive
         }
-        ingest(file, result.source, result.attempts, result.warnings, result.artifacts)
+        ingest(file, result.olderSnoops, result.source, result.attempts, result.warnings, result.artifacts)
     }
 
     fun importFile(uri: Uri) = runExclusive("Importing a capture file", CaptureStep.COLLECT) {
@@ -672,11 +672,12 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
             report(message)
             return@runExclusive
         }
-        ingest(file, result.source, result.attempts, result.warnings, result.artifacts)
+        ingest(file, result.olderSnoops, result.source, result.attempts, result.warnings, result.artifacts)
     }
 
     private suspend fun ingest(
         file: File,
+        older: List<File> = emptyList(),
         source: String,
         attempts: List<CollectAttempt>,
         collectWarnings: List<String>,
@@ -687,7 +688,15 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
         // CPU-bound dispatcher shared with the timeline derivation.
         val parsed = withContext(Dispatchers.IO) {
             runCatching {
-                BtsnoopParser(maxEvents = MAX_SESSION_EVENTS, rawPackets = true).parse(file)
+                // Oldest first: a restart mid-capture splits the operator's actions across files,
+                // and parsed ids come from the record bytes, so overlapping records collapse.
+                val earlier = older.mapNotNull { rotation ->
+                    runCatching {
+                        BtsnoopParser(maxEvents = MAX_SESSION_EVENTS, rawPackets = false).parse(rotation)
+                    }.getOrNull()
+                }
+                val current = BtsnoopParser(maxEvents = MAX_SESSION_EVENTS, rawPackets = true).parse(file)
+                if (earlier.isEmpty()) current else current.mergedWith(earlier)
             }
         }
         val outcome = parsed.getOrElse { error ->

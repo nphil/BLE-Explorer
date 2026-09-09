@@ -66,7 +66,38 @@ data class BtsnoopParseResult(
     val events: List<BleEvent>,
     val summary: ParseSummary,
     val rawHex: Map<String, String> = emptyMap(),
-)
+) {
+    /**
+     * Folds captures of the same session together, oldest first, keeping this result as the
+     * authoritative one. Event ids hash the record's own bytes, so records present in more than
+     * one file (rotations overlap) collapse to a single event and timestamps stay ordered.
+     *
+     * Only the counts that are honestly additive are summed; per-peer and per-name maps stay as
+     * this result reported them, because merging them would double-count a shared connection.
+     */
+    fun mergedWith(earlier: List<BtsnoopParseResult>): BtsnoopParseResult {
+        if (earlier.isEmpty()) return this
+        val seen = HashSet<String>(events.size * 2)
+        val merged = ArrayList<BleEvent>(events.size)
+        for (result in earlier + this) {
+            for (event in result.events) if (seen.add(event.id)) merged += event
+        }
+        merged.sortBy { it.timestampEpochMicros }
+        val all = earlier + this
+        return copy(
+            events = merged,
+            summary = summary.copy(
+                records = all.sumOf { it.summary.records },
+                attEvents = all.sumOf { it.summary.attEvents },
+                systemEvents = all.sumOf { it.summary.systemEvents },
+                connections = all.sumOf { it.summary.connections },
+                warnings = (all.flatMap { it.summary.warnings } +
+                    "Merged ${all.size} capture files from one bugreport; the adapter restarted between them.")
+                    .distinct(),
+            ),
+        )
+    }
+}
 
 /**
  * Deterministic [BleEvent.id] for one decoded record.

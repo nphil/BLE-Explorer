@@ -182,6 +182,12 @@ data class CollectAttempt(val label: String, val ok: Boolean, val detail: String
 
 data class CollectResult(
     val btsnoop: File? = null,
+    /**
+     * Older captures from the same bugreport, oldest first. A Bluetooth restart is part of the
+     * capture flow, so the traffic an operator produced is routinely split across two files; all
+     * of them are parsed and merged rather than trusting one filename.
+     */
+    val olderSnoops: List<File> = emptyList(),
     val source: String = "",
     val artifacts: List<File> = emptyList(),
     val attempts: List<CollectAttempt> = emptyList(),
@@ -413,7 +419,7 @@ class SnoopController(
                     attempts += CollectAttempt(label, true, "${target.length()} bytes")
                     artifacts += target
                     onProgress(CollectProgress(CollectStage.DONE, "Read the live snoop file directly"))
-                    return CollectResult(target, label, artifacts, attempts)
+                    return CollectResult(target, source = label, artifacts = artifacts, attempts = attempts)
                 }
                 target.delete()
                 attempts += CollectAttempt(
@@ -473,7 +479,20 @@ class SnoopController(
                 )
                 artifacts += found.snoopFile
                 onProgress(CollectProgress(CollectStage.DONE, "Extracted ${found.snoopEntry}"))
-                return CollectResult(found.snoopFile, "bugreport: ${found.snoopEntry}", artifacts, attempts)
+                if (found.olderSnoops.isNotEmpty()) {
+                    attempts += CollectAttempt(
+                        "bugreport rotations",
+                        true,
+                        "${found.olderSnoops.size} older capture(s) merged: ${found.olderEntries.joinToString()}",
+                    )
+                }
+                return CollectResult(
+                    found.snoopFile,
+                    olderSnoops = found.olderSnoops,
+                    source = "bugreport: ${found.snoopEntry}",
+                    artifacts = artifacts + found.olderSnoops,
+                    attempts = attempts,
+                )
             }
             if (found.snooz != null) {
                 attempts += CollectAttempt("bugreport btsnooz summary", true, "${found.snooz.size} bytes from ${found.snoozEntry}")
@@ -597,7 +616,7 @@ class SnoopController(
                     artifacts += target
                     attempts += CollectAttempt("btsnooz v${result.version}", true, "${result.records} records")
                     onProgress(CollectProgress(CollectStage.DONE, "Decoded ${result.records} btsnooz records"))
-                    CollectResult(target, source, artifacts, attempts, result.warnings + BTSNOOZ_CAVEAT)
+                    CollectResult(target, source = source, artifacts = artifacts, attempts = attempts, warnings = result.warnings + BTSNOOZ_CAVEAT)
                 },
                 onFailure = { error ->
                     target.delete()
@@ -611,6 +630,8 @@ class SnoopController(
 
     private class ZipFindings(
         val snoopFile: File?,
+        val olderSnoops: List<File> = emptyList(),
+        val olderEntries: List<String> = emptyList(),
         val snoopEntry: String?,
         val snooz: ByteArray?,
         val snoozEntry: String?,
@@ -630,6 +651,8 @@ class SnoopController(
         var snoopEntry: String? = null
         var snoopIsRotated = true
         var snoopStamp = Long.MIN_VALUE
+        val others = ArrayList<File>()
+        val otherEntries = ArrayList<String>()
         var snooz: ByteArray? = null
         var snoozEntry: String? = null
         var entries = 0
@@ -659,7 +682,11 @@ class SnoopController(
                             val target = File(cacheRoot, "bugreport-$stamp-btsnoop${if (rotated) "-last" else ""}.log")
                             val bytes = copyEntry(SequenceInputStream(ByteArrayInputStream(head), NonClosing(zin)), target, MAX_SNOOP_BYTES)
                             if (bytes > head.size) {
-                                snoopFile?.takeIf { it != target }?.delete()
+                                snoopFile?.takeIf { it != target }?.let { previous ->
+                                    // Keep it: a rotation still holds real traffic.
+                                    others += previous
+                                    otherEntries += snoopEntry.orEmpty()
+                                }
                                 snoopFile = target
                                 snoopEntry = name
                                 snoopIsRotated = rotated
@@ -681,7 +708,7 @@ class SnoopController(
                 zin.closeEntry()
             }
         }
-        return ZipFindings(snoopFile, snoopEntry, snooz, snoozEntry, entries, related)
+        return ZipFindings(snoopFile, others, otherEntries, snoopEntry, snooz, snoozEntry, entries, related)
     }
 
     private fun readFully(source: InputStream, into: ByteArray): Int {
@@ -732,7 +759,7 @@ class SnoopController(
             if (hasBtsnoopMagic(staged)) {
                 attempts += CollectAttempt("imported btsnoop", true, "$bytes bytes")
                 onProgress(CollectProgress(CollectStage.DONE, "Imported a btsnoop capture"))
-                return@withContext CollectResult(staged, "imported $displayName", artifacts, attempts)
+                return@withContext CollectResult(staged, source = "imported $displayName", artifacts = artifacts, attempts = attempts)
             }
             if (hasZipMagic(staged)) {
                 onProgress(CollectProgress(CollectStage.EXTRACT, "Searching $displayName"))
@@ -741,7 +768,13 @@ class SnoopController(
                     artifacts += found.snoopFile
                     attempts += CollectAttempt("imported bugreport", true, found.snoopEntry.orEmpty())
                     onProgress(CollectProgress(CollectStage.DONE, "Extracted ${found.snoopEntry}"))
-                    return@withContext CollectResult(found.snoopFile, "imported ${found.snoopEntry}", artifacts, attempts)
+                    return@withContext CollectResult(
+                        found.snoopFile,
+                        olderSnoops = found.olderSnoops,
+                        source = "imported ${found.snoopEntry}",
+                        artifacts = artifacts + found.olderSnoops,
+                        attempts = attempts,
+                    )
                 }
                 if (found.snooz != null) {
                     return@withContext decodeSnooz(found.snooz, "imported ${found.snoozEntry}", stamp, artifacts, attempts, onProgress)
