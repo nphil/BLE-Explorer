@@ -79,6 +79,40 @@ class ControlInventoryTest {
     }
 
     @Test
+    fun `the state a control is left in is not part of its identity`() {
+        val inventory = ControlInventory(labeler)
+        val power = control("switch_power", HOME).copy(className = "android.widget.Switch", text = "Power")
+        val slider = control("seek_brightness", HOME).copy(className = "android.widget.SeekBar")
+        inventory.observe(HOME, listOf(power, slider))
+
+        assertTrue(inventory.touch(power))
+        // The second tap on the switch carries the opposite state and a different marker label.
+        assertFalse(inventory.touch(power))
+        assertEquals(
+            listOf("Power -> off", "Power -> on"),
+            listOf(false, true).map { markerLabel("Power", ControlOutcome(checked = it)) },
+        )
+        // A slider is marked off with its value stripped, then recorded with the value it settled
+        // on: one control, not two.
+        assertTrue(inventory.touch(slider))
+        assertFalse(inventory.touch(slider.copy(rangeValue = 62f)))
+
+        val progress = inventory.progress()
+        assertEquals(2, progress.total)
+        assertEquals(2, progress.touchedCount)
+        assertEquals(emptyList<String>(), progress.untouched(HOME).map { labeler.key(it) })
+    }
+
+    @Test
+    fun `a screen is named by its activity, then by its window title`() {
+        assertEquals("MainActivity", screenName(activity = "MainActivity", windowTitle = "Mi Home", previous = "Old"))
+        assertEquals("Mi Home", screenName(activity = null, windowTitle = "Mi Home", previous = "Old"))
+        // A content change that names nothing must not rename the screen under the checklist.
+        assertEquals("Old", screenName(activity = "  ", windowTitle = null, previous = "Old"))
+        assertEquals(UNNAMED_SCREEN, screenName(activity = null, windowTitle = null, previous = ""))
+    }
+
+    @Test
     fun `pointing the guide at another app starts an empty checklist`() {
         val inventory = ControlInventory(labeler)
         inventory.observe(HOME, listOf(control("btn_power", HOME)))

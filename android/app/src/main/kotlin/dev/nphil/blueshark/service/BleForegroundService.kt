@@ -1,5 +1,7 @@
 package dev.nphil.blueshark.service
 
+import dev.nphil.blueshark.BlueSharkApp
+
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -36,7 +38,12 @@ import kotlinx.coroutines.launch
  */
 class BleForegroundService : LifecycleService() {
 
-    private val modes = LinkedHashSet<String>()
+    /**
+     * Claim counts per mode. Several screens hold the shared GATT link at once (a project page,
+     * the prober it hosts, the scan detail), so a mode is released only when its last claimant
+     * lets go; a set would drop the foreground on the first release while the link is still busy.
+     */
+    private val modes = LinkedHashMap<String, Int>()
     private var relayJob: Job? = null
 
     /** Address of the live GATT link, once one is established; only for the notification text. */
@@ -50,7 +57,10 @@ class BleForegroundService : LifecycleService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         if (intent?.action == ACTION_STOP) {
+            // Stop means stop: the notification is the only control the operator has once every
+            // screen is gone, so it must also drop the GATT link the screens were sharing.
             RelaySession.stop()
+            runCatching { (application as BlueSharkApp).container.gattClient.disconnect() }
             modes.clear()
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -59,8 +69,11 @@ class BleForegroundService : LifecycleService() {
 
         if (intent?.action == ACTION_RELEASE) {
             val released = intent.getStringExtra(EXTRA_MODE)
-            if (released != null) modes -= released
-            if (released == MODE_GATT) gattAddress = null
+            if (released != null) {
+                val left = (modes[released] ?: 1) - 1
+                if (left <= 0) modes.remove(released) else modes[released] = left
+            }
+            if (released == MODE_GATT && MODE_GATT !in modes) gattAddress = null
             // Another reason to hold the link may remain - a relay run outlives any one screen.
             if (modes.isEmpty()) {
                 ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -72,7 +85,7 @@ class BleForegroundService : LifecycleService() {
         }
 
         val mode = intent?.getStringExtra(EXTRA_MODE)
-        if (mode != null) modes += mode
+        if (mode != null) modes[mode] = (modes[mode] ?: 0) + 1
         if (mode == MODE_GATT) {
             intent?.getStringExtra(EXTRA_ADDRESS)?.let { gattAddress = it }
         }
@@ -103,7 +116,7 @@ class BleForegroundService : LifecycleService() {
             return START_NOT_STICKY
         }
 
-        if (modes.contains(MODE_RELAY)) {
+        if (modes.containsKey(MODE_RELAY)) {
             RelaySession.attach(applicationContext)
             observeRelay()
         }
@@ -167,7 +180,7 @@ class BleForegroundService : LifecycleService() {
         val open = packageManager.getLaunchIntentForPackage(packageName)?.let { launch ->
             PendingIntent.getActivity(this, REQUEST_OPEN, launch, PendingIntent.FLAG_IMMUTABLE)
         }
-        val relaying = modes.contains(MODE_RELAY)
+        val relaying = modes.containsKey(MODE_RELAY)
         val title = if (relaying) "BLE relay - ${state.phase.label}" else "Live GATT session"
         val text = if (relaying) relayText(state) else gattText()
         return NotificationCompat.Builder(this, CHANNEL_ID)

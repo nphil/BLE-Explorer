@@ -1070,9 +1070,14 @@ private val COLLECT_STEPS = listOf(
 /**
  * Honest progress: a determinate bar only when a total is known, otherwise bytes so far and a
  * live elapsed clock, plus which stage of the pipeline is running. Shown for every long action.
+ *
+ * Internal rather than private because the device-project funnel finishes a learning session with
+ * the same [CaptureViewModel.collect] this screen uses, and an operator watching a bug report
+ * being extracted deserves the same honest read-out in both places rather than a second, vaguer
+ * spinner written beside it.
  */
 @Composable
-private fun ProgressPanel(progress: CollectProgress?, working: Boolean, busy: String?, stages: Boolean) {
+internal fun ProgressPanel(progress: CollectProgress?, working: Boolean, busy: String?, stages: Boolean) {
     if (!working && progress == null) return
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(working, progress?.startedAtMs) {

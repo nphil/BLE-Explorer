@@ -83,6 +83,7 @@ fun ScanScreen(
     requestPermissions: () -> Unit,
     onOpenInSession: (sessionId: String) -> Unit,
     onSignal: (address: String) -> Unit,
+    onProbe: (address: String) -> Unit,
 ) {
     val viewModel: ScanViewModel = viewModel(factory = remember(container) { ScanViewModel.factory(container) })
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -163,6 +164,7 @@ fun ScanScreen(
                                 onSubscribe = viewModel::setSubscribed,
                                 onSaveToSession = viewModel::openSessionPicker,
                                 onSignal = { onSignal(address) },
+                                onProbe = { onProbe(address) },
                             ),
                         )
                     }

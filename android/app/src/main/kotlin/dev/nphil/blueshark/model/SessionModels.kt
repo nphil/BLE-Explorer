@@ -35,6 +35,29 @@ data class CaptureSession(
      */
     val capturePath: String? = null,
     val ciphers: List<CipherScheme> = emptyList(),
+    /** Every Command Prober sweep run against this device; see [ProbeRecord]. */
+    val probes: List<ProbeRecord> = emptyList(),
+    /**
+     * What the device turned out to be, once the fingerprint had enough to say so. Null until the
+     * project's Identify stage has run; see [FamilyMatchRecord].
+     */
+    val family: FamilyMatchRecord? = null,
+    /** Everything this device is known to accept, from every stage that contributed. */
+    val commandMap: List<MappedCommandRecord> = emptyList(),
+    /** The learning session that drove the vendor app, while it runs and after it finished. */
+    val learning: LearningRecord? = null,
+    /** When a Home Assistant profile was last exported from this project; null while none was. */
+    val exportedAtEpochMs: Long? = null,
+    /**
+     * The operator's word that HCI logging is on, for the builds where nothing can check.
+     *
+     * Without a privileged shell the capability probe returns an error and no mode, so the snoop
+     * checklist row would be unsatisfiable forever and a learning session could never start. This
+     * is the tick that unblocks it - and it is kept per project rather than per screen because it
+     * has to survive navigating away and coming back, and because it is a claim about this
+     * capture, which the collected log will either bear out or not.
+     */
+    val snoopConfirmedByOperator: Boolean = false,
     val notes: String = "",
 )
 
@@ -166,6 +189,12 @@ data class BleEvent(
     val source: EventSource,
     val operation: AttOperation,
     val connectionHandle: Int? = null,
+    /**
+     * Peer the connection handle belonged to, resolved from the capture's connection events. An
+     * HCI log holds every link the phone had open, so without this a write to some other
+     * peripheral inside a tap's window would be learned as the target's command.
+     */
+    val peerAddress: String? = null,
     val serviceUuid: String? = null,
     val characteristicUuid: String? = null,
     val attributeHandle: Int? = null,
@@ -262,6 +291,129 @@ data class NotificationSpec(
     val decodingHypotheses: List<ParameterHypothesis> = emptyList(),
     val proposedHomeAssistantEntity: String? = null,
     val notes: String = "",
+)
+
+// ---------------------------------------------------------------------------
+// Command Prober
+// ---------------------------------------------------------------------------
+
+/**
+ * One candidate frame the Command Prober wrote to a characteristic, and what the device answered.
+ *
+ * Deliberately flat and stringly-typed for [verdict]: this is evidence on disk that outlives the
+ * build that wrote it, so it must not be pinned to an enum in `dev.nphil.blueshark.probe` whose
+ * members may be renamed or reordered, and someone reading the exported JSON without BlueShark
+ * must still be able to tell an accepted opcode from a rejected one.
+ *
+ * @param runId groups every record of one sweep; re-saving the same sweep is idempotent because
+ *   the pair ([runId], [stepIndex]) is its identity.
+ * @param verdict `ACCEPTED`, `REJECTED_UNKNOWN_ID`, `REJECTED_OTHER`, `NO_RESPONSE` or `ERROR`.
+ * @param canary true for a known-good frame interleaved into the sweep to prove the device is
+ *   still answering; a silent canary invalidates every later `NO_RESPONSE` as evidence.
+ * @param lateResponsesHex frames that arrived on this step's response window after it had already
+ *   closed. Kept apart from [responseHex] on purpose: attributing a late frame to a step - or to
+ *   the step after it - is exactly the mistake this record exists to rule out.
+ * @param observedEffect what the operator saw the device do, typed after the sweep. The only
+ *   field here that is not machine-derived.
+ */
+@Serializable
+data class ProbeRecord(
+    val runId: String,
+    val stepIndex: Int,
+    val opcode: Int,
+    val label: String = "",
+    val argumentHex: String = "",
+    val codecId: String = "",
+    val serviceUuid: String = "",
+    val characteristicUuid: String = "",
+    val writeType: WriteType = WriteType.WITHOUT_RESPONSE,
+    val sentHex: String,
+    val responseHex: String? = null,
+    val verdict: String,
+    val statusByte: Int? = null,
+    val elapsedMs: Long = 0,
+    val canary: Boolean = false,
+    val lateResponsesHex: List<String> = emptyList(),
+    val note: String = "",
+    val observedEffect: String = "",
+    val recordedAtEpochMs: Long = System.currentTimeMillis(),
+)
+
+// ---------------------------------------------------------------------------
+// Device project
+// ---------------------------------------------------------------------------
+
+/**
+ * The ecosystem the fingerprint named, as evidence on disk.
+ *
+ * A mirror of `identify.FamilyMatch` rather than that type itself, for the same reason
+ * [ProbeRecord] mirrors a probe outcome: this file outlives the build that wrote it, so
+ * [confidence] is a string and not an enum whose members may be renamed or reordered. The
+ * evidence lines are kept verbatim - a match the operator cannot audit is worse than none.
+ */
+@Serializable
+data class FamilyMatchRecord(
+    val familyId: String,
+    val name: String,
+    /** `CERTAIN`, `LIKELY` or `POSSIBLE`. */
+    val confidence: String,
+    val evidence: List<String> = emptyList(),
+    val publicDriverUrl: String? = null,
+    val codecId: String? = null,
+    val commandCharacteristicHints: List<String> = emptyList(),
+    val identifiedAtEpochMs: Long = System.currentTimeMillis(),
+)
+
+/**
+ * One thing this device can be told to do, as evidence on disk: the persisted form of
+ * `learn.MappedCommand`.
+ *
+ * Two fields exist here that the pure type has no room for. [confidence] is the tap-attribution
+ * confidence the correlator computed, kept because a learned command's worth is exactly how sure
+ * we are that the tap caused the write. [decodedHex] is filled in by the family's frame codec
+ * when there is one - it is a decoding, never a guess, and null means nobody could read the frame.
+ *
+ * @param stage the strongest evidence behind these bytes. `DEVICE_TESTED` means BlueShark wrote
+ *   them and something observable happened; nothing weaker may be offered as a runnable command.
+ */
+@Serializable
+data class MappedCommandRecord(
+    val id: String,
+    val name: String,
+    val characteristicUuid: String? = null,
+    val payloadHex: String,
+    val decodedHex: String? = null,
+    /** `probe`, `learned` or `manual`. */
+    val source: String,
+    val stage: EvidenceStage = EvidenceStage.OBSERVED,
+    val evidence: List<String> = emptyList(),
+    val confidence: Double? = null,
+    /**
+     * How the bytes have to go out, when that is known.
+     *
+     * It is not cosmetic: a characteristic that only advertises WRITE_NO_RESPONSE rejects a write
+     * request, and one that only advertises WRITE ignores a command, so a Home Assistant profile
+     * that guesses this ships a button that always fails. Null means nobody recorded it - a
+     * learned frame whose capture did not say which ATT opcode carried it.
+     */
+    val writeType: WriteType? = null,
+)
+
+/**
+ * The learning session that drove the vendor app: where its traffic was read from, when it ran,
+ * and which app it was.
+ *
+ * [finishedAtEpochMs] of null means the session is still open - which is how the overlay's Finish
+ * button finds the project to collect into after the app was relaunched, even across a cold start.
+ */
+@Serializable
+data class LearningRecord(
+    /** `HCI_SNOOP` or `RELAY`; the name of a `learn.TrafficSource`. */
+    val source: String,
+    val startedAtEpochMs: Long,
+    val finishedAtEpochMs: Long? = null,
+    val vendorPackage: String? = null,
+    val vendorLabel: String? = null,
 )
 
 @Serializable

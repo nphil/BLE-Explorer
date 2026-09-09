@@ -7,7 +7,6 @@ import dev.nphil.blueshark.AppContainer
 import dev.nphil.blueshark.data.MissingSessionException
 import dev.nphil.blueshark.export.CommandAnalyzer
 import dev.nphil.blueshark.export.EligibilityReport
-import dev.nphil.blueshark.export.ExportService
 import dev.nphil.blueshark.export.HaProfileBuilder
 import dev.nphil.blueshark.export.ProfileNotExportableException
 import dev.nphil.blueshark.export.SuggestedCommand
@@ -138,7 +137,9 @@ private class PendingEdit(
  * inputs change.
  */
 class SessionsViewModel(private val container: AppContainer) : ViewModel() {
-    private val exports = ExportService(container.appContext, container.sessions)
+    // The one export cache in the process: its week-long pruning must not race the project
+    // screen's, which would delete a freshly written artefact out from under a share target.
+    private val exports = container.exports
     private val _state = MutableStateFlow(SessionsUiState())
     val state: StateFlow<SessionsUiState> = _state.asStateFlow()
     private val _effects = MutableSharedFlow<SessionEffect>(extraBufferCapacity = 8)

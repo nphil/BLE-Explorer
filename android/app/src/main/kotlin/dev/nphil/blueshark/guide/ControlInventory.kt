@@ -5,6 +5,24 @@ import dev.nphil.blueshark.model.ControlRef
 /** Stateless, so one instance can serve every coverage record. */
 private val LABELER = ControlLabeler()
 
+/** What a screen is called when the app offers no name at all. */
+const val UNNAMED_SCREEN = "screen"
+
+/**
+ * What to key one screen's inventory by.
+ *
+ * The activity class name comes first: it is stable, it survives the app changing what it writes
+ * into the window title, and it is what a developer reading the export will recognise. A window
+ * title is the fall-back (Compose single-activity apps often set one), then whatever the screen was
+ * already called - a content change with no name of its own must not rename the screen underneath
+ * the checklist.
+ */
+fun screenName(activity: String?, windowTitle: String?, previous: String): String =
+    activity?.trim()?.takeIf { it.isNotEmpty() }
+        ?: windowTitle?.trim()?.takeIf { it.isNotEmpty() }
+        ?: previous.trim().takeIf { it.isNotEmpty() }
+        ?: UNNAMED_SCREEN
+
 /**
  * What one screen of the vendor app offers, and how much of it the operator has already exercised.
  *

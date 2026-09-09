@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -63,6 +64,8 @@ class DeviceDetailActions(
     val onSaveToSession: () -> Unit,
     /** Hands this address to the Signal screen for placement diagnostics. */
     val onSignal: () -> Unit,
+    /** Hands this address to the Command Prober for a guided opcode sweep. */
+    val onProbe: () -> Unit,
 )
 
 @Composable
@@ -236,6 +239,13 @@ private fun DetailHeader(
                 ) {
                     Icon(Icons.Filled.Radar, contentDescription = null, modifier = Modifier.size(18.dp))
                     Text("Signal", modifier = Modifier.padding(start = 8.dp))
+                }
+                FilledTonalButton(
+                    onClick = actions.onProbe,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Icon(Icons.Filled.Science, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Text("Probe", modifier = Modifier.padding(start = 8.dp))
                 }
                 OutlinedButton(
                     onClick = actions.onSaveToSession,

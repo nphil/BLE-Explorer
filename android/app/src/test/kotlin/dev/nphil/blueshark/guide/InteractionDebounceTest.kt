@@ -1,6 +1,5 @@
 package dev.nphil.blueshark.guide
 
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -68,11 +67,5 @@ class InteractionDebounceTest {
         debounce.clear()
 
         assertTrue(debounce.accept("btn_power", CLICK_DEBOUNCE_MS))
-    }
-
-    @Test
-    fun `the marker text carries a slider's value and nothing else`() {
-        assertEquals("Brightness = 42.0", markerLabel("Brightness", 42f))
-        assertEquals("Power", markerLabel("Power", null))
     }
 }

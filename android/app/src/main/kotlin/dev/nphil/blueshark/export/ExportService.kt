@@ -37,6 +37,7 @@ class ExportService(context: Context, private val sessions: SessionStore) {
     enum class ExportKind(val fileSuffix: String, val label: String) {
         EVIDENCE("evidence", "evidence bundle"),
         HA_PROFILE("ha-profile", "Home Assistant profile"),
+        PROFILE_DRAFT("ha-profile-draft", "Home Assistant profile draft"),
     }
 
     data class Export(
@@ -77,6 +78,21 @@ class ExportService(context: Context, private val sessions: SessionStore) {
                 write(session, ExportKind.HA_PROFILE, HaProfileBuilder.encode(profile))
             }
         }
+
+    /**
+     * A device project's draft profile, already rendered by
+     * [dev.nphil.blueshark.learn.ProfileDraft].
+     *
+     * Distinct from [exportHaProfile] because the two answer different questions.
+     * [HaProfileBuilder] ships only what a device confirmed and refuses to write a file at all
+     * when nothing qualifies; a draft is the whole command map, with everything weaker than
+     * device-tested marked synthetic so the integration installs it without wiring an entity to
+     * a payload nobody ever replayed. The text is passed in rather than rendered here so this
+     * layer keeps knowing nothing about command maps - it writes bytes atomically and hands out a
+     * content URI, which is the only thing it is good at.
+     */
+    suspend fun exportProfileDraft(session: CaptureSession, draft: String): Export =
+        withContext(Dispatchers.IO) { write(session, ExportKind.PROFILE_DRAFT, draft) }
 
     fun shareIntent(export: Export): Intent {
         val send = Intent(Intent.ACTION_SEND).apply {

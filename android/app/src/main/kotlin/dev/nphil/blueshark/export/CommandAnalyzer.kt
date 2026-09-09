@@ -5,6 +5,8 @@ import dev.nphil.blueshark.model.BleEvent
 import dev.nphil.blueshark.model.CaptureMarker
 import dev.nphil.blueshark.model.CaptureSession
 import dev.nphil.blueshark.model.EventDirection
+import dev.nphil.blueshark.model.GattCharacteristicRecord
+import dev.nphil.blueshark.model.GattDatabase
 import dev.nphil.blueshark.model.ResponseExpectation
 import dev.nphil.blueshark.model.WriteType
 import java.util.BitSet
@@ -178,12 +180,29 @@ object CommandAnalyzer {
     }
 
     /** Service that owns [characteristicUuid] according to the captured GATT database. */
-    fun resolveServiceUuid(session: CaptureSession, characteristicUuid: String?): String? {
+    fun resolveServiceUuid(session: CaptureSession, characteristicUuid: String?): String? =
+        resolveServiceUuid(session.gatt, characteristicUuid)
+
+    /** Same lookup against a database on its own, for callers that hold no session. */
+    fun resolveServiceUuid(gatt: GattDatabase?, characteristicUuid: String?): String? =
+        resolveCharacteristic(gatt, characteristicUuid)?.first
+
+    /**
+     * The service that exposes [characteristicUuid] and the characteristic record itself, so a
+     * caller that also needs the properties does not walk the database a second time with a
+     * second notion of uuid equality.
+     */
+    fun resolveCharacteristic(
+        gatt: GattDatabase?,
+        characteristicUuid: String?,
+    ): Pair<String, GattCharacteristicRecord>? {
         val target = groupingUuid(characteristicUuid) ?: return null
-        val services = session.gatt?.services ?: return null
+        val services = gatt?.services ?: return null
         for (service in services) {
             for (characteristic in service.characteristics) {
-                if (groupingUuid(characteristic.uuid) == target) return groupingUuid(service.uuid)
+                if (groupingUuid(characteristic.uuid) != target) continue
+                val serviceUuid = groupingUuid(service.uuid) ?: return null
+                return serviceUuid to characteristic
             }
         }
         return null

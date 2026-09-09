@@ -7,6 +7,7 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -18,6 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** A whole-tree rebuild is not free, and content changes arrive in floods while an app animates. */
@@ -31,6 +33,9 @@ private const val SNAPSHOT_MAX_NODES = 1_500
 private const val LABEL_ANCESTORS = 2
 private const val SIBLING_DEPTH = 2
 
+/** Elapsed time, the target's presence and the observer's own liveness all move without events. */
+private const val COCKPIT_TICK_MS = 1_000L
+
 /**
  * Watches the one vendor app the operator selected while they drive the gadget: it drops a capture
  * marker for every control they touch and keeps the per-screen inventory of controls that are still
@@ -39,9 +44,11 @@ private const val SIBLING_DEPTH = 2
  * Privacy, by construction:
  * - only the selected package is observed ([AccessibilityServiceInfo.packageNames] plus a per-event
  *   check), and nothing at all while no package is selected;
- * - [AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED] is not in the subscribed set, so what the operator
- *   types is never delivered to this process;
- * - only labels, resource ids, class names and screen rectangles are recorded.
+ * - [AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED] is not in the subscribed set, so the operator's
+ *   keystrokes are never delivered to this process;
+ * - what is recorded is labels, resource ids, class names, screen rectangles - and, for a control
+ *   the operator drove, the state it was left in: a switch position, a slider percentage, or the
+ *   value already visible in a field, clipped to [MARKER_TEXT_MAX] characters.
  */
 class ControlObserverService : AccessibilityService() {
 
@@ -58,8 +65,17 @@ class ControlObserverService : AccessibilityService() {
     private var foreground: String? = null
     private var lastInventoryAt = 0L
 
-    /** Pending slider settles, keyed by control identity: the value it lands on wins. */
-    private val settling = HashMap<String, Runnable>()
+    /**
+     * Interactions waiting for their control to settle, keyed by control identity: the state it
+     * lands on wins. Each holds the platform node it will re-read, and owns releasing it.
+     */
+    private val settling = HashMap<String, Settling>()
+
+    /** Last activity class name seen in front for the target package; the screen is keyed by it. */
+    private var activity: String? = null
+
+    /** The vendor app's own name, resolved once per package so the strip can show it. */
+    private var appLabel: Pair<String, String>? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -77,7 +93,7 @@ class ControlObserverService : AccessibilityService() {
             debug = container.debug,
             onMark = guide::emitManualMarker,
             onToggleHighlights = { guide.setHighlights(!guide.state.value.highlights) },
-            onOpenApp = ::openBlueShark,
+            onFinish = ::finishLearning,
         )
         scope?.cancel()
         val started = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -88,6 +104,15 @@ class ControlObserverService : AccessibilityService() {
                 refreshOverlay()
             }
         }
+        // Nothing about the session clock, the target's presence or the observer's own silence is
+        // event-driven, so the cockpit is also pushed on a slow tick.
+        started.launch {
+            while (true) {
+                delay(COCKPIT_TICK_MS)
+                refreshOverlay()
+            }
+        }
+        started.launch { guide.targetStatus.collect { refreshOverlay() } }
         val target = guide.state.value.targetPackage
         applyTarget(target)
         if (target != null) primeForeground(target)
@@ -103,7 +128,7 @@ class ControlObserverService : AccessibilityService() {
         val from = root.packageName?.toString()
         root.release()
         foreground = from
-        if (from == target) rebuildInventory(target, force = true, fallbackScreen = null)
+        if (from == target) rebuildInventory(target, force = true)
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
@@ -122,8 +147,7 @@ class ControlObserverService : AccessibilityService() {
     }
 
     private fun teardown(reason: String) {
-        settling.values.forEach { main.removeCallbacks(it) }
-        settling.clear()
+        settling.keys.toList().forEach(::cancelSettle)
         scope?.cancel()
         scope = null
         runCatching { overlay?.destroy() }
@@ -151,6 +175,7 @@ class ControlObserverService : AccessibilityService() {
         }
         if (target == null) {
             screen = ""
+            activity = null
             foreground = null
             runCatching { overlay?.hide() }
         }
@@ -171,13 +196,16 @@ class ControlObserverService : AccessibilityService() {
         }
         if (from != target) return
         if (foreground == null) foreground = from
+        guide.noteEvent()
 
         when (event.eventType) {
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ->
-                rebuildInventory(target, force = true, fallbackScreen = activityNameOf(event))
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                activityNameOf(event)?.let { activity = it }
+                rebuildInventory(target, force = true)
+            }
 
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ->
-                rebuildInventory(target, force = false, fallbackScreen = null)
+                rebuildInventory(target, force = false)
 
             AccessibilityEvent.TYPE_VIEW_CLICKED,
             AccessibilityEvent.TYPE_VIEW_LONG_CLICKED,
@@ -192,73 +220,137 @@ class ControlObserverService : AccessibilityService() {
     }
 
     /**
-     * Marks the control that was driven off the checklist and emits its marker. A range control is
-     * settled instead: a drag fires continuously, and only the value the operator lands on is worth
-     * recording.
+     * Marks the control that was driven off the checklist and emits its marker, carrying the state
+     * the control was left in.
+     *
+     * A control whose state the interaction changed is settled instead of emitted at once: a drag
+     * fires continuously and only the value the operator lands on matters, and a switch still
+     * reports the state it is *leaving* at the moment its click event is delivered.
      *
      * @param rangeOnly the event is a scroll, which is a control interaction only on a range node.
      */
     private fun onInteraction(event: AccessibilityEvent, target: String, rangeOnly: Boolean) {
         val guide = container?.guide ?: return
         val source = event.source ?: return
-        val node = try {
-            snapshotWithAncestors(source)
-        } finally {
-            source.release()
-        }
-        if (node == null) return
-        val range = node.rangeValue
-        // A plain list scroll is not an interaction with a control; the content change that follows
-        // rebuilds the inventory anyway.
-        if (rangeOnly && range == null) return
-        if (screen.isBlank()) rebuildInventory(target, force = true, fallbackScreen = null)
+        // The moment of the tap, kept because the marker may only be emitted once it has settled.
+        val at = System.currentTimeMillis()
+        var handedOver = false
+        try {
+            val node = snapshotWithAncestors(source) ?: return
+            // A plain list scroll is not an interaction with a control; the content change that
+            // follows rebuilds the inventory anyway.
+            if (rangeOnly && node.rangeValue == null) return
+            if (screen.isBlank()) rebuildInventory(target, force = true)
 
-        val control = ControlRef(
-            packageName = event.packageName?.toString() ?: target,
-            screen = screen.ifBlank { UNNAMED_SCREEN },
-            viewId = node.viewId,
-            className = node.className,
-            text = node.text.trim(),
-            contentDescription = node.contentDescription.trim(),
-            bounds = node.bounds,
-            rangeValue = range,
-        )
-        val label = labeler.label(node)
-        if (range == null) {
-            guide.recordInteraction(control, label, CLICK_DEBOUNCE_MS)
-            refreshOverlay()
-        } else {
-            settle(control, label)
+            val outcome = outcomeOf(node)
+            val control = ControlRef(
+                packageName = event.packageName?.toString() ?: target,
+                screen = screen.ifBlank { UNNAMED_SCREEN },
+                viewId = node.viewId,
+                className = node.className,
+                text = node.text.trim(),
+                contentDescription = node.contentDescription.trim(),
+                bounds = node.bounds,
+                rangeValue = node.rangeValue,
+            )
+            val label = labeler.label(node)
+            val settleMs = when {
+                node.rangeValue != null -> RANGE_SETTLE_MS
+                node.checkable || node.editable -> CHECK_SETTLE_MS
+                else -> 0L
+            }
+            if (settleMs <= 0L) {
+                guide.recordInteraction(control, label, outcome, at)
+                refreshOverlay()
+            } else {
+                settle(control, label, outcome, source, settleMs, at)
+                handedOver = true
+            }
+        } finally {
+            if (!handedOver) source.release()
         }
     }
 
     /**
-     * Records a range interaction once the operator stops moving it: the checklist is updated at
-     * once, so the highlight clears under their finger, while the marker waits for silence.
+     * Emits the marker once the interaction has settled, re-reading [node] first so the state that
+     * reaches the timeline is the one the operator can see.
+     *
+     * The checklist is updated immediately - the highlight has to clear under their finger - while
+     * the marker waits. [node] is owned by the pending emit from here on.
      */
-    private fun settle(control: ControlRef, label: String) {
-        val guide = container?.guide ?: return
+    private fun settle(
+        control: ControlRef,
+        label: String,
+        outcome: ControlOutcome,
+        node: AccessibilityNodeInfo,
+        delayMs: Long,
+        atMs: Long,
+    ) {
+        val guide = container?.guide ?: run {
+            node.release()
+            return
+        }
         val key = labeler.key(control)
-        settling.remove(key)?.let { main.removeCallbacks(it) }
-        // Checklist only while the finger is still down; the marker waits for the settled value.
+        cancelSettle(key)
         guide.markTouched(control.copy(rangeValue = null))
         refreshOverlay()
         val emit = Runnable {
+            // Removed first, so the release below is the only one this node can get.
             settling.remove(key)
-            guide.recordInteraction(control, label, CLICK_DEBOUNCE_MS)
+            val settled = settledOutcome(node, outcome)
+            node.release()
+            guide.recordInteraction(
+                control = control.copy(rangeValue = settled.rangeValue ?: control.rangeValue),
+                label = label,
+                outcome = settled,
+                atMs = atMs,
+            )
             refreshOverlay()
         }
-        settling[key] = emit
-        main.postDelayed(emit, RANGE_SETTLE_MS)
+        settling[key] = Settling(node, emit)
+        main.postDelayed(emit, delayMs)
     }
+
+    /** Drops a pending emit and releases the node it was holding. */
+    private fun cancelSettle(key: String) {
+        val pending = settling.remove(key) ?: return
+        main.removeCallbacks(pending.emit)
+        pending.node.release()
+    }
+
+    /**
+     * The state the control holds now. A click event is delivered before the vendor app has applied
+     * it, so the node is re-read; when the platform refuses the refresh - the view is gone, the app
+     * has moved on - the state read at event time is all there is.
+     */
+    private fun settledOutcome(node: AccessibilityNodeInfo, fallback: ControlOutcome): ControlOutcome {
+        if (!runCatching { node.refresh() }.getOrDefault(false)) return fallback
+        val range = runCatching { node.rangeInfo }.getOrNull()
+        return ControlOutcome(
+            checked = if (runCatching { node.isCheckable }.getOrDefault(false)) {
+                runCatching { node.checkedNow() }.getOrDefault(false)
+            } else {
+                null
+            },
+            rangeValue = range?.current,
+            rangePercent = rangePercent(range?.current, range?.min, range?.max),
+            text = if (runCatching { node.isEditable }.getOrDefault(false)) {
+                node.text?.toString().orEmpty()
+            } else {
+                ""
+            },
+        )
+    }
+
+    /** A marker waiting for its control to settle, and the node it will re-read on the way out. */
+    private class Settling(val node: AccessibilityNodeInfo, val emit: Runnable)
 
     /**
      * Re-reads the active window and republishes its actionable controls.
      *
      * @param force bypasses the throttle; used when the window itself changed.
-     * @param fallbackScreen activity name to fall back on when the window has no title.
      */
-    private fun rebuildInventory(target: String, force: Boolean, fallbackScreen: String?) {
+    private fun rebuildInventory(target: String, force: Boolean) {
         val guide = container?.guide ?: return
         val now = System.currentTimeMillis()
         if (!force && now - lastInventoryAt < INVENTORY_THROTTLE_MS) return
@@ -268,7 +360,7 @@ class ControlObserverService : AccessibilityService() {
             if (root.packageName?.toString() != target) {
                 null
             } else {
-                screen = windowTitleOf(root) ?: fallbackScreen ?: screen.ifBlank { UNNAMED_SCREEN }
+                screen = screenName(activity, windowTitleOf(root), screen)
                 copy(root, 0, intArrayOf(SNAPSHOT_MAX_NODES))
             }
         } finally {
@@ -301,6 +393,7 @@ class ControlObserverService : AccessibilityService() {
             val rect = Rect(bounds[0], bounds[1], bounds[2], bounds[3])
             if (labeler.key(control) in pending) untouched += rect else touched += rect
         }
+        val now = System.currentTimeMillis()
         runCatching {
             overlay.show(
                 OverlayFrame(
@@ -311,14 +404,53 @@ class ControlObserverService : AccessibilityService() {
                     lastLabel = state.lastInteraction?.let { labeler.describe(it) }.orEmpty(),
                     untouched = untouched,
                     touched = touched,
+                    sessionLine = sessionLine(
+                        appLabel = state.targetLabel ?: appLabelOf(target),
+                        elapsedMs = if (state.sessionStartedAtMs > 0L) now - state.sessionStartedAtMs else 0L,
+                    ),
+                    targetLine = targetLine(guide.targetStatus.value, state.sessionStartedAtMs),
+                    countersLine = countersLine(state.taps),
+                    quietLine = quietLine(quietSeconds(state.lastEventAtMs, now)),
+                    dock = chooseDock(coverage?.controls.orEmpty(), screenHeight()),
                 ),
             )
         }.onFailure { container?.debug?.log("guide", "overlay frame failed: ${it.message}") }
     }
 
-    private fun openBlueShark() {
+    /**
+     * Display height in the coordinate space control bounds arrive in, so the dock decision and the
+     * pill's own placement agree on where "the bottom" is.
+     */
+    private fun screenHeight(): Int = runCatching {
+        getSystemService(WindowManager::class.java).currentWindowMetrics.bounds.height()
+    }.getOrDefault(resources.displayMetrics.heightPixels)
+
+    /**
+     * The vendor app's own name, as the launcher shows it. Cached: this is read on every frame, and
+     * the package manager lookup is a binder call.
+     */
+    private fun appLabelOf(packageName: String): String {
+        appLabel?.let { (cached, label) -> if (cached == packageName) return label }
+        val label = runCatching {
+            packageManager.getApplicationLabel(packageManager.getApplicationInfo(packageName, 0)).toString()
+        }.getOrNull()?.trim()?.takeIf { it.isNotEmpty() } ?: packageName
+        appLabel = packageName to label
+        return label
+    }
+
+    /**
+     * Finish: end the session, then hand back to BlueShark with the flag that tells it to collect
+     * and correlate this session without asking the operator to press anything else.
+     */
+    private fun finishLearning() {
+        container?.guide?.finishSession()
+        openBlueShark(finishLearning = true)
+    }
+
+    private fun openBlueShark(finishLearning: Boolean) {
         val intent = Intent(this, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        if (finishLearning) intent.putExtra(GuideController.EXTRA_FINISH_LEARNING, true)
         runCatching { startActivity(intent) }
             .onFailure { container?.debug?.log("guide", "could not bring BlueShark forward: ${it.message}") }
     }
@@ -401,6 +533,7 @@ class ControlObserverService : AccessibilityService() {
             copy(child, depth + 1, budget, depthLimit)?.let { children += it }
             child.release()
         }
+        val range = runCatching { node.rangeInfo }.getOrNull()
         return NodeSnapshot(
             text = node.text?.toString().orEmpty(),
             contentDescription = node.contentDescription?.toString().orEmpty(),
@@ -409,15 +542,26 @@ class ControlObserverService : AccessibilityService() {
             bounds = if (rect.isEmpty) emptyList() else listOf(rect.left, rect.top, rect.right, rect.bottom),
             clickable = node.isClickable,
             checkable = node.isCheckable,
+            checked = node.checkedNow(),
             longClickable = node.isLongClickable,
+            editable = runCatching { node.isEditable }.getOrDefault(false),
             visible = node.isVisibleToUser,
-            rangeValue = runCatching { node.rangeInfo?.current }.getOrNull(),
+            rangeValue = range?.current,
+            rangeMin = range?.min,
+            rangeMax = range?.max,
             children = children,
         )
     }
 }
 
-private const val UNNAMED_SCREEN = "screen"
+/**
+ * Whether a checkable node is checked.
+ *
+ * The tri-state accessor that deprecated this one only exists well above this app's minSdk, and the
+ * marker grammar the learn/ slice parses is binary either way, so the boolean is the one code path.
+ */
+@Suppress("DEPRECATION")
+private fun AccessibilityNodeInfo.checkedNow(): Boolean = isChecked
 
 /**
  * Recycling is required below API 33 and a no-op afterwards (the platform pools nodes itself), so

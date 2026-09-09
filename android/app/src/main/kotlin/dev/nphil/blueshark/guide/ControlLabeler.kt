@@ -23,11 +23,21 @@ interface NodeView {
     val bounds: List<Int>
     val clickable: Boolean
     val checkable: Boolean
+
+    /** Current state of a [checkable] node; meaningless, and always false, on any other node. */
+    val checked: Boolean
     val longClickable: Boolean
+
+    /** True when the node holds text the operator can change (a field, not a caption). */
+    val editable: Boolean
     val visible: Boolean
 
     /** Current value when the node models a range (slider, seek bar, volume), else null. */
     val rangeValue: Float?
+
+    /** The ends a range node moves between; null on anything else, and on a broken range. */
+    val rangeMin: Float?
+    val rangeMax: Float?
 }
 
 /**
@@ -43,9 +53,13 @@ class NodeSnapshot(
     override val bounds: List<Int> = emptyList(),
     override val clickable: Boolean = false,
     override val checkable: Boolean = false,
+    override val checked: Boolean = false,
     override val longClickable: Boolean = false,
+    override val editable: Boolean = false,
     override val visible: Boolean = true,
     override val rangeValue: Float? = null,
+    override val rangeMin: Float? = null,
+    override val rangeMax: Float? = null,
     children: List<NodeSnapshot> = emptyList(),
 ) : NodeView {
 

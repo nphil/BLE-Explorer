@@ -24,11 +24,13 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -41,6 +43,9 @@ import androidx.window.core.layout.WindowSizeClass
 import dev.nphil.blueshark.AppContainer
 import dev.nphil.blueshark.R
 import dev.nphil.blueshark.ui.capture.CaptureScreen
+import dev.nphil.blueshark.ui.probe.ProbeScreen
+import dev.nphil.blueshark.ui.project.ProjectScreen
+import dev.nphil.blueshark.ui.project.ProjectsScreen
 import dev.nphil.blueshark.ui.relay.RelayScreen
 import dev.nphil.blueshark.ui.scan.ScanScreen
 import dev.nphil.blueshark.ui.sessions.SessionsScreen
@@ -65,6 +70,16 @@ fun AppShell(container: AppContainer, themeSettings: ThemeSettings) {
     val layout = sizeClass.navLayout()
     val expanded = layout != NavLayout.BAR
     val permissions = rememberBlePermissionState()
+    val learning by container.learning.state.collectAsStateWithLifecycle()
+
+    // The overlay's Finish button reaches MainActivity as an intent extra, which asks the
+    // coordinator to close the session; the project it belongs to is where the collection has to
+    // happen, so the shell routes there. The request is left set - the project screen consumes it,
+    // which is what makes the navigation and the collection one action rather than two.
+    LaunchedEffect(learning.finishRequestedFor) {
+        val target = learning.finishRequestedFor ?: return@LaunchedEffect
+        navController.navigate(projectRoute(target)) { launchSingleTop = true }
+    }
 
     val navigate: (Destination) -> Unit = { dest ->
         navController.navigate(dest.route) {
@@ -78,7 +93,7 @@ fun AppShell(container: AppContainer, themeSettings: ThemeSettings) {
         NavLayout.DRAWER -> Row(Modifier.fillMaxSize()) {
             PermanentDrawerSheet(Modifier.windowInsetsPadding(WindowInsets.safeDrawing)) {
                 Brand(Modifier.padding(horizontal = 28.dp, vertical = 24.dp))
-                Destination.entries.forEach { dest ->
+                Destination.navigation.forEach { dest ->
                     NavigationDrawerItem(
                         label = { Text(dest.label) },
                         selected = dest == current,
@@ -94,7 +109,7 @@ fun AppShell(container: AppContainer, themeSettings: ThemeSettings) {
         NavLayout.RAIL -> Row(Modifier.fillMaxSize()) {
             NavigationRail(Modifier.windowInsetsPadding(WindowInsets.safeDrawing)) {
                 Spacer(Modifier.height(8.dp))
-                Destination.entries.forEach { dest ->
+                Destination.navigation.forEach { dest ->
                     NavigationRailItem(
                         selected = dest == current,
                         onClick = { navigate(dest) },
@@ -109,7 +124,7 @@ fun AppShell(container: AppContainer, themeSettings: ThemeSettings) {
         NavLayout.BAR -> Scaffold(
             bottomBar = {
                 NavigationBar {
-                    Destination.entries.forEach { dest ->
+                    Destination.navigation.forEach { dest ->
                         NavigationBarItem(
                             selected = dest == current,
                             onClick = { navigate(dest) },
@@ -157,6 +172,24 @@ private const val SIGNAL_ROUTE = "signal?address={$SIGNAL_ARG}"
 /** Deep link that opens the Signal tab already measuring [address]. */
 private fun signalRoute(address: String): String = "signal?address=${Uri.encode(address)}"
 
+private const val PROBE_ARG = "address"
+private const val PROBE_ROUTE = "probe?address={$PROBE_ARG}"
+
+/** Deep link that opens the Probe tab already targeting [address]. */
+private fun probeRoute(address: String): String = "probe?address=${Uri.encode(address)}"
+
+private const val PROJECT_ARG = "sessionId"
+
+/**
+ * The prefix is shared with [Destination.fromRoute], which maps it back onto the Devices tab; one
+ * literal, so a rename cannot leave the navigation surface highlighting nothing.
+ */
+private const val PROJECT_ROUTE = "${Destination.PROJECT_PREFIX}{$PROJECT_ARG}"
+
+/** The one route with a required argument: a project is meaningless without its session. */
+private fun projectRoute(sessionId: String): String =
+    Destination.PROJECT_PREFIX + Uri.encode(sessionId)
+
 @Composable
 private fun Content(
     navController: NavHostController,
@@ -167,7 +200,50 @@ private fun Content(
     modifier: Modifier,
 ) {
     Box(modifier.fillMaxSize()) {
-        NavHost(navController, startDestination = Destination.SCAN.route) {
+        NavHost(navController, startDestination = Destination.DEVICES.route) {
+            composable(Destination.DEVICES.route) {
+                ProjectsScreen(
+                    container = container,
+                    expanded = expanded,
+                    bluetoothGranted = permissions.granted,
+                    requestPermissions = permissions.request,
+                    onOpenProject = { sessionId ->
+                        navController.navigate(projectRoute(sessionId)) { launchSingleTop = true }
+                    },
+                    onOpenSession = { sessionId ->
+                        navController.navigate(sessionsRoute(sessionId)) { launchSingleTop = true }
+                    },
+                )
+            }
+            composable(
+                route = PROJECT_ROUTE,
+                arguments = listOf(navArgument(PROJECT_ARG) { type = NavType.StringType }),
+            ) { entry ->
+                val sessionId = entry.arguments?.getString(PROJECT_ARG)
+                if (sessionId == null) {
+                    navController.popBackStack()
+                } else {
+                    ProjectScreen(
+                        container = container,
+                        sessionId = sessionId,
+                        expanded = expanded,
+                        bluetoothGranted = permissions.granted,
+                        requestPermissions = permissions.request,
+                        onOpenProbe = { address ->
+                            navController.navigate(probeRoute(address)) { launchSingleTop = true }
+                        },
+                        onOpenCapture = {
+                            navController.navigate(Destination.CAPTURE.route) { launchSingleTop = true }
+                        },
+                        onOpenRelay = {
+                            navController.navigate(Destination.RELAY.route) { launchSingleTop = true }
+                        },
+                        onOpenEvidence = { id ->
+                            navController.navigate(sessionsRoute(id)) { launchSingleTop = true }
+                        },
+                    )
+                }
+            }
             composable(Destination.SCAN.route) {
                 ScanScreen(
                     container = container,
@@ -180,6 +256,9 @@ private fun Content(
                     onSignal = { address ->
                         navController.navigate(signalRoute(address)) { launchSingleTop = true }
                     },
+                    onProbe = { address ->
+                        navController.navigate(probeRoute(address)) { launchSingleTop = true }
+                    },
                 )
             }
             composable(Destination.CAPTURE.route) {
@@ -187,6 +266,27 @@ private fun Content(
             }
             composable(Destination.RELAY.route) {
                 RelayScreen(container, expanded, permissions.granted, permissions.request)
+            }
+            composable(
+                route = PROBE_ROUTE,
+                // Same optional-query-argument form as the sessions and signal routes: a bare
+                // "probe" from the navigation bar matches, and `probe?address=<addr>` lands its
+                // value in arguments.
+                arguments = listOf(
+                    navArgument(PROBE_ARG) {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                ),
+            ) { entry ->
+                ProbeScreen(
+                    container = container,
+                    expanded = expanded,
+                    bluetoothGranted = permissions.granted,
+                    requestPermissions = permissions.request,
+                    initialAddress = entry.arguments?.getString(PROBE_ARG),
+                )
             }
             composable(
                 route = SIGNAL_ROUTE,

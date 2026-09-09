@@ -237,8 +237,16 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
             }
         }
         viewModelScope.launch { guide.state.collect { g -> _state.update { it.copy(guideState = g) } } }
-        // Observed taps become markers on exactly the path a typed marker takes.
-        viewModelScope.launch { guide.autoMarkers.collect { marker -> appendMarker(marker) } }
+        // Observed taps become markers on exactly the path a typed marker takes - but only in the
+        // session that owns the learning run. Several of these ViewModels can be alive at once
+        // (each project screen hosts one, and the navigation back stack keeps them), and each
+        // would otherwise persist the same tap into its own session.
+        viewModelScope.launch {
+            guide.autoMarkers.collect { marker ->
+                val owner = container.learning.state.value.sessionId
+                if (owner == null || owner == _state.value.sessionId) appendMarker(marker)
+            }
+        }
         viewModelScope.launch { loadSessions() }
         refreshGuide()
         loadApps()
@@ -512,6 +520,9 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
      * take-over observed the tap that produced it.
      */
     private fun appendMarker(marker: CaptureMarker) {
+        // Idempotent by id: the same auto marker can reach this session through more than one
+        // live ViewModel, and a second copy would double every tap in the correlation.
+        if (_state.value.markers.any { it.id == marker.id }) return
         _state.update { current ->
             current.copy(
                 markers = current.markers + marker,
@@ -519,8 +530,12 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
             ).withTimeline()
         }
         viewModelScope.launch {
-            runCatching { persist { session -> session.copy(markers = session.markers + marker) } }
-                .onFailure { report("Marker not saved: ${it.message}") }
+            runCatching {
+                persist { session ->
+                    if (session.markers.any { it.id == marker.id }) session
+                    else session.copy(markers = session.markers + marker)
+                }
+            }.onFailure { report("Marker not saved: ${it.message}") }
         }
     }
 
@@ -717,15 +732,33 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
         // Exactly one connected peer needs no chooser; more than one does, because only the
         // operator knows which address is the gadget.
         val onlyPeer = outcome.summary.connectionsByPeer.keys.singleOrNull()
+        val peers = outcome.summary.connectionsByPeer.keys
+        // Handles are reused across connections, so this is the last peer that owned a handle in
+        // this capture; good enough to keep another peripheral's traffic out of the correlation.
+        val peerByHandle = HashMap<Int, String>()
+        outcome.summary.connectionsByPeer.forEach { (address, summary) ->
+            summary.handles.forEach { peerByHandle[it] = address }
+        }
         val saved = persist { session ->
             val known = session.events.mapTo(HashSet(session.events.size), BleEvent::id)
-            val fresh = outcome.events.filterNot { it.id in known }
+            val fresh = outcome.events.filterNot { it.id in known }.map { event ->
+                val peer = event.connectionHandle?.let(peerByHandle::get)
+                if (peer == null || event.peerAddress != null) event else event.copy(peerAddress = peer)
+            }
             appended = fresh.size
             val withEvents = session.copy(
                 events = (session.events + fresh).takeLast(MAX_SESSION_EVENTS),
                 capturePath = file.absolutePath,
             )
-            if (onlyPeer == null) withEvents else enrich(withEvents, outcome.summary, onlyPeer)
+            // A session that already names its device keeps it: the log may hold one other peer
+            // (a watch, a different gadget) and letting that re-identify a project would point
+            // the presence scan, the Test buttons and the HA profile at the wrong hardware.
+            val namedDevice = session.device.address.takeIf { it.isNotBlank() }
+            val target = when {
+                namedDevice != null -> peers.firstOrNull { it.equals(namedDevice, ignoreCase = true) }
+                else -> onlyPeer
+            }
+            if (target == null) withEvents else enrich(withEvents, outcome.summary, target)
         }
         rawPackets = trimRawPackets(outcome.rawHex)
         dissectionContext = dissectionContextOf(outcome.summary)
