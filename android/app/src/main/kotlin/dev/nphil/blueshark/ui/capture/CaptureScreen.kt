@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
@@ -422,6 +423,20 @@ private fun CapabilityCard(state: CaptureUiState, viewModel: CaptureViewModel) {
                 FactRow("dumpsys bluetooth_manager", if (capabilities.bluetoothManagerDumpsys) "available" else "not available")
                 FactRow("bugreportz", capabilities.bugreportz ?: "not available", mono = true)
                 capabilities.error?.let { FactRow("Probe error", it, tint = MaterialTheme.colorScheme.error) }
+                if (capabilities.diagnostics.isNotBlank()) {
+                    var showDiagnostics by remember { mutableStateOf(false) }
+                    TextButton(onClick = { showDiagnostics = !showDiagnostics }) {
+                        Text(if (showDiagnostics) "Hide Bluetooth diagnostics" else "Show Bluetooth diagnostics")
+                    }
+                    if (showDiagnostics) {
+                        Text(
+                            text = capabilities.diagnostics,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = MonoFamily,
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        )
+                    }
+                }
             }
         }
     }

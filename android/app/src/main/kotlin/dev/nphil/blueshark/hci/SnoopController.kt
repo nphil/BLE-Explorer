@@ -40,6 +40,8 @@ data class SnoopCapabilities(
      * not depend on which property an OEM's Settings toggle writes or on what shell may read.
      */
     val stackSnoopLog: String = "",
+    /** Broad, read-only dump of everything Bluetooth-related the shell can see; for diagnosing OEM toggles. */
+    val diagnostics: String = "",
     val logDirectory: String = "",
     val logDirectoryReadable: Boolean = false,
     val bluetoothManagerShell: Boolean = false,
@@ -179,6 +181,10 @@ class SnoopController(
         val ALL_PROPS = listOf("getprop")
         /** Dump (not follow) of the stack's own "Snoop Logs ..." announcements; `-e` filters by regex. */
         val LOGCAT_SNOOP_MODE = listOf("logcat", "-d", "-b", "main,system", "-v", "time", "-e", "Snoop Logs")
+        val SETTINGS_GLOBAL = listOf("settings", "list", "global")
+        val SETTINGS_SECURE = listOf("settings", "list", "secure")
+        /** Newest stack lines mentioning snoop/btsnoop, whatever the tag; bounded by -t. */
+        val LOGCAT_SNOOP_ANY = listOf("logcat", "-d", "-b", "main,system", "-v", "time", "-t", "400", "-e", "(?i)snoop")
 
         val LOGCAT = listOf(
             "logcat", "-v", "epoch", "-b", "main,system",
@@ -198,7 +204,23 @@ class SnoopController(
             val managerHelp = shell.run(Argv.BLUETOOTH_MANAGER_HELP, SHORT_TIMEOUT)
             val bugreportz = shell.run(Argv.BUGREPORTZ_VERSION, SHORT_TIMEOUT)
             val stackLog = shell.run(Argv.LOGCAT_SNOOP_MODE, SHORT_TIMEOUT)
+            val settingsGlobal = shell.run(Argv.SETTINGS_GLOBAL, SHORT_TIMEOUT)
+            val settingsSecure = shell.run(Argv.SETTINGS_SECURE, SHORT_TIMEOUT)
+            val dumpsys = shell.run(Argv.DUMPSYS_BLUETOOTH, SHORT_TIMEOUT)
+            val snoopLogcat = shell.run(Argv.LOGCAT_SNOOP_ANY, SHORT_TIMEOUT)
+            val bt = Regex("""(?i)bluetooth|snoop|\bbt[._]""")
+            fun section(title: String, text: String, filter: Regex? = bt) = buildString {
+                append("## ").append(title).append('\n')
+                val lines = text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() && (filter == null || filter.containsMatchIn(it)) }.take(80).toList()
+                if (lines.isEmpty()) append("(nothing)\n") else lines.forEach { append(it).append('\n') }
+            }
+            val diagnostics = section("getprop", allProps.stdout) +
+                section("settings global", settingsGlobal.stdout) +
+                section("settings secure", settingsSecure.stdout) +
+                section("dumpsys bluetooth_manager (snoop lines)", dumpsys.stdout, Regex("(?i)snoop")) +
+                section("logcat (snoop lines, newest 400 entries)", snoopLogcat.stdout, null)
             SnoopCapabilities(
+                diagnostics = diagnostics,
                 shellIdentity = identity.text.ifBlank { identity.failure },
                 snoopProperties = snoopPropertyLines(allProps.stdout),
                 snoopMode = mode.text,
