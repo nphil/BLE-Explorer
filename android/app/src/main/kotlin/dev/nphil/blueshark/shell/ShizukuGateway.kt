@@ -73,10 +73,16 @@ data class ShellResult(
     val failure: String
         get() = when {
             timedOut -> "timed out"
-            stderr.isNotBlank() -> stderr.trim().takeLast(600)
-            stdout.isNotBlank() -> stdout.trim().takeLast(600)
+            stderr.isNotBlank() -> "exit $exitCode: " + clip(stderr.trim())
+            stdout.isNotBlank() -> "exit $exitCode: " + clip(stdout.trim())
             else -> "exit code $exitCode"
         }
+
+    private companion object {
+        /** Keeps both ends of a long message: the cause is usually at the head, the summary at the tail. */
+        fun clip(text: String, head: Int = 1_400, tail: Int = 600): String =
+            if (text.length <= head + tail) text else text.take(head) + "\n…[${text.length - head - tail} chars elided]…\n" + text.takeLast(tail)
+    }
 }
 
 /** Outcome of streaming a process' raw stdout straight into a file. */
@@ -91,7 +97,7 @@ data class ShellFileResult(
     val failure: String
         get() = when {
             timedOut -> "timed out"
-            stderr.isNotBlank() -> stderr.trim().takeLast(600)
+            stderr.isNotBlank() -> "exit $exitCode: " + stderr.trim().let { if (it.length <= 2_000) it else it.take(1_400) + "\n…\n" + it.takeLast(600) }
             bytes == 0L -> "produced no output (exit code $exitCode)"
             else -> "exit code $exitCode"
         }

@@ -831,7 +831,7 @@ private fun CollectCard(state: CaptureUiState, viewModel: CaptureViewModel) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        ProgressPanel(state.progress, working = state.working, busy = state.busy)
+        if (state.busyStep == null || state.busyStep == CaptureStep.COLLECT) ProgressPanel(state.progress, working = state.working, busy = state.busy, stages = true)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = viewModel::collect, enabled = state.shellReady && !state.working) {
                 Text("Stop and collect")
@@ -893,7 +893,11 @@ private fun ResultCard(state: CaptureUiState, viewModel: CaptureViewModel) {
                         label = attempt.label,
                         value = attempt.detail,
                         mono = true,
-                        tint = if (attempt.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                        tint = when {
+                            attempt.ok -> MaterialTheme.colorScheme.primary
+                            attempt.skipped -> MaterialTheme.colorScheme.onSurfaceVariant
+                            else -> MaterialTheme.colorScheme.error
+                        },
                     )
                 }
             }
@@ -960,6 +964,9 @@ private fun StepCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
+            if (state.working && state.busyStep == step && step != CaptureStep.COLLECT) {
+                ProgressPanel(state.progress, working = true, busy = state.busy, stages = false)
             }
             content()
         }
@@ -1041,7 +1048,7 @@ private val COLLECT_STEPS = listOf(
  * live elapsed clock, plus which stage of the pipeline is running. Shown for every long action.
  */
 @Composable
-private fun ProgressPanel(progress: CollectProgress?, working: Boolean, busy: String?) {
+private fun ProgressPanel(progress: CollectProgress?, working: Boolean, busy: String?, stages: Boolean) {
     if (!working && progress == null) return
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(working, progress?.startedAtMs) {
@@ -1052,7 +1059,7 @@ private fun ProgressPanel(progress: CollectProgress?, working: Boolean, busy: St
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (working) Text(busy ?: "Working", style = MaterialTheme.typography.bodyMedium)
-        if (progress != null && progress.stage != CollectStage.FAILED) {
+        if (stages && progress != null && progress.stage != CollectStage.FAILED) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val currentIndex = COLLECT_STEPS.indexOfFirst { it.first == progress.stage }
                 COLLECT_STEPS.forEachIndexed { index, (stage, label) ->

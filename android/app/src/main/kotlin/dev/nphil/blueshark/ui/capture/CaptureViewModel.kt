@@ -100,6 +100,8 @@ data class CaptureUiState(
     val capabilities: SnoopCapabilities = SnoopCapabilities(),
     val probing: Boolean = false,
     val busy: String? = null,
+    /** Which step card owns the running operation, so its progress renders in place. */
+    val busyStep: CaptureStep? = null,
     val progress: CollectProgress? = null,
     val completed: Set<CaptureStep> = emptySet(),
     val apps: List<VendorApp> = emptyList(),
@@ -341,7 +343,9 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
 
     fun setSnoopMode(mode: SnoopMode) = runExclusive(
         label = if (mode == SnoopMode.FULL) "Enabling full HCI logging" else "Disabling HCI logging",
+        step = if (mode == SnoopMode.FULL) CaptureStep.LOGGING else CaptureStep.CLEANUP,
     ) {
+        _state.update { it.copy(progress = CollectProgress(CollectStage.BUGREPORT, "setprop persist.bluetooth.btsnooplogmode ${mode.property}, then getprop")) }
         val result = snoop.setSnoopMode(mode)
         debug.log("setprop", result.detail)
         val step = if (mode == SnoopMode.FULL) CaptureStep.LOGGING else CaptureStep.CLEANUP
@@ -362,7 +366,8 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
         )
     }
 
-    fun restartBluetooth() = runExclusive("Restarting Bluetooth") {
+    fun restartBluetooth() = runExclusive("Restarting Bluetooth", CaptureStep.RESTART) {
+        _state.update { it.copy(progress = CollectProgress(CollectStage.BUGREPORT, "Turning the adapter off, waiting for OFF, then on (up to 20 s each)")) }
         val result = snoop.restartBluetooth()
         debug.log("restart", (result.steps + listOfNotNull(result.error)).joinToString(" | "))
         // The service re-reads the snoop setting on enable, so the probe only means something now.
@@ -590,7 +595,7 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
 
     // ------------------------------------------------------------------ collect and import
 
-    fun collect() = runExclusive("Collecting HCI log") {
+    fun collect() = runExclusive("Collecting HCI log", CaptureStep.COLLECT) {
         val result = snoop.collect { progress -> _state.update { it.copy(progress = progress) } }
         result.attempts.forEach { debug.log("collect", "${if (it.ok) "ok" else "FAIL"} ${it.label}: ${it.detail}") }
         val file = result.btsnoop
@@ -614,7 +619,7 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
         ingest(file, result.source, result.attempts, result.warnings, result.artifacts)
     }
 
-    fun importFile(uri: Uri) = runExclusive("Importing a capture file") {
+    fun importFile(uri: Uri) = runExclusive("Importing a capture file", CaptureStep.COLLECT) {
         // Both the provider round trips (display name, then the stream) belong off the main thread.
         val opened = withContext(Dispatchers.IO) {
             val name = runCatching { displayNameOf(uri) }.getOrNull() ?: FALLBACK_IMPORT_NAME
@@ -819,7 +824,7 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
             append("BlueShark ").append(dev.nphil.blueshark.BuildConfig.VERSION_NAME).append(" collection report\n")
             s.collectedFrom?.let { append("source: ").append(it).append('\n') }
             s.summary?.let { append("records=").append(it.records).append(" att=").append(it.attEvents).append(" connections=").append(it.connections).append('\n') }
-            s.attempts.forEach { append(if (it.ok) "ok   " else "FAIL ").append(it.label).append(": ").append(it.detail).append('\n') }
+            s.attempts.forEach { append(if (it.ok) "ok   " else if (it.skipped) "skip " else "FAIL ").append(it.label).append(": ").append(it.detail).append('\n') }
             s.warnings.forEach { append("warn ").append(it).append('\n') }
             s.error?.let { append("error: ").append(it).append('\n') }
             s.restartSteps.takeIf { it.isNotEmpty() }?.let { append("restart: ").append(it.joinToString(" | ")).append('\n') }
@@ -846,12 +851,12 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /** Serialises the long shell operations: exactly one runs at a time, and it stays cancellable. */
-    private fun runExclusive(label: String, block: suspend () -> Unit) {
+    private fun runExclusive(label: String, step: CaptureStep? = null, block: suspend () -> Unit) {
         if (shellJob?.isActive == true) {
             report("Another shell operation is still running")
             return
         }
-        _state.update { it.copy(busy = label, error = null, progress = null) }
+        _state.update { it.copy(busy = label, busyStep = step, error = null, progress = null) }
         shellJob = viewModelScope.launch {
             try {
                 block()
@@ -877,7 +882,8 @@ class CaptureViewModel(private val container: AppContainer) : ViewModel() {
                 report(error.message ?: "$label failed")
             } finally {
                 shellJob = null
-                _state.update { it.copy(busy = null) }
+                // Collect keeps its final stage text in the report; other steps' progress is transient.
+                _state.update { it.copy(busy = null, busyStep = null, progress = if (step == CaptureStep.COLLECT) it.progress else null) }
             }
         }
     }

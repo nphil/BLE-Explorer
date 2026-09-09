@@ -34,6 +34,8 @@ import java.util.Locale
 
 /** Rate limits, batching and redaction live in [NtfyBudget]; this class is the Android plumbing. */
 private const val RING_CAPACITY = 400
+/** Unsent lines kept while ntfy is unreachable; older ones are dropped with a marker line. */
+private const val PENDING_CAPACITY = 2_000
 private const val DEFAULT_TOPIC = "blueshark-nphil-XWESpf9F3gas"
 
 private val Context.debugStore: DataStore<Preferences> by preferencesDataStore("debug")
@@ -91,6 +93,11 @@ class DebugLog(context: Context, private val scope: CoroutineScope) {
                 if (ring.size == RING_CAPACITY) ring.removeFirst()
                 ring.addLast(line)
                 pending.addLast(line)
+                if (pending.size > PENDING_CAPACITY) {
+                    val drop = pending.size - PENDING_CAPACITY + PENDING_CAPACITY / 10
+                    repeat(drop) { pending.removeFirst() }
+                    pending.addFirst("${stamp.format(Date())} [debug] dropped $drop unsent lines (ntfy unreachable)")
+                }
                 _status.update { it.copy(queuedLines = pending.size) }
             }
         }

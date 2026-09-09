@@ -131,7 +131,7 @@ fun classifySnoopWrite(mode: SnoopMode, write: ShellResult, read: ShellResult): 
     val applied = observed.equals(mode.property, ignoreCase = true)
     val detail = when {
         applied -> "persist.bluetooth.btsnooplogmode = $observed"
-        !write.succeeded -> "setprop refused (${write.failure.lineSequence().first()}). " +
+        !write.succeeded -> "setprop refused (${write.failure}). " +
             "Only system_server and the Bluetooth stack may write this property; a shell-UID Shizuku cannot. " +
             "Use Developer options > Enable Bluetooth HCI snoop log."
         else -> "setprop reported success but the property still reads \"$observed\""
@@ -156,7 +156,8 @@ data class CollectProgress(
     val startedAtMs: Long = System.currentTimeMillis(),
 )
 
-data class CollectAttempt(val label: String, val ok: Boolean, val detail: String)
+/** [skipped] marks a path that was not expected to work here; rendered neutrally, not as a failure. */
+data class CollectAttempt(val label: String, val ok: Boolean, val detail: String, val skipped: Boolean = false)
 
 data class CollectResult(
     val btsnoop: File? = null,
@@ -404,10 +405,12 @@ class SnoopController(
                     artifacts += dump
                     return decodeSnooz(block, "dumpsys bluetooth_manager", stamp, artifacts, attempts, onProgress)
                 }
+                val decodeError = snooz.exceptionOrNull()?.message
                 attempts += CollectAttempt(
                     "dumpsys bluetooth_manager",
                     false,
-                    snooz.exceptionOrNull()?.message ?: "no ${BtsnoozDecoder.BEGIN_MARKER} block",
+                    decodeError ?: "no ${BtsnoozDecoder.BEGIN_MARKER} block (expected: the stack only emits that summary while snoop logging is off)",
+                    skipped = decodeError == null,
                 )
             } else {
                 attempts += CollectAttempt("dumpsys bluetooth_manager", false, dumpResult.failure)
