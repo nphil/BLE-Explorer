@@ -2,7 +2,7 @@
 # Render brand PNGs from the SVG sources (requires rsvg-convert from librsvg).
 set -eu
 cd "$(dirname "$0")/.."
-B=custom_components/ble_studio/brand
+B=custom_components/blueshark/brand
 rsvg-convert -w 256 -h 256 branding/icon.svg -o "$B/icon.png"
 cp "$B/icon.png" "$B/dark_icon.png"
 rsvg-convert -w 600 -h 128 branding/logo.svg -o "$B/logo.png"

@@ -1,4 +1,4 @@
-# BLE Studio stack research (2026-09-08)
+# BlueShark stack research (2026-09-08)
 
 ## Version baseline and reproducibility
 
@@ -188,35 +188,35 @@ jobs:
           KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
         run: |
           test -n "$KEYSTORE_B64"
-          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/ble-studio-release.jks"
-          chmod 600 "$RUNNER_TEMP/ble-studio-release.jks"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/blueshark-release.jks"
+          chmod 600 "$RUNNER_TEMP/blueshark-release.jks"
       - name: Build signed release APK
         env:
-          RELEASE_STORE_FILE: ${{ runner.temp }}/ble-studio-release.jks
+          RELEASE_STORE_FILE: ${{ runner.temp }}/blueshark-release.jks
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: ./gradlew :app:assembleRelease --no-daemon
       - name: Rename universal APK
-        run: cp app/build/outputs/apk/release/app-release.apk "BLE-Studio-${GITHUB_REF_NAME}.apk"
+        run: cp app/build/outputs/apk/release/app-release.apk "BlueShark-${GITHUB_REF_NAME}.apk"
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: BLE-Studio-${{ github.ref_name }}.apk
+          files: BlueShark-${{ github.ref_name }}.apk
 ```
 
 Generate the keystore non-interactively (store the resulting base64 only in the secret manager):
 
 ```bash
-keytool -genkeypair -v -keystore ble-studio-release.jks -storetype JKS \
-  -alias ble-studio -keyalg RSA -keysize 4096 -validity 10000 \
+keytool -genkeypair -v -keystore blueshark-release.jks -storetype JKS \
+  -alias blueshark -keyalg RSA -keysize 4096 -validity 10000 \
   -storepass "$RELEASE_STORE_PASSWORD" -keypass "$RELEASE_KEY_PASSWORD" \
-  -dname "CN=BLE Studio, OU=Mobile, O=BLE Studio, L=Unknown, ST=Unknown, C=US"
-base64 -w0 ble-studio-release.jks > ble-studio-release.jks.b64
+  -dname "CN=BlueShark, OU=Mobile, O=BlueShark, L=Unknown, ST=Unknown, C=US"
+base64 -w0 blueshark-release.jks > blueshark-release.jks.b64
 ```
 
-Obtainium's GitHub source reads release metadata/assets; the asset must be a directly downloadable `.apk`. Use one universal APK named predictably (for example `BLE-Studio-v1.2.3.apk`) to avoid architecture filtering and split-selection prompts. If publishing multiple APKs, users must configure Obtainium's APK regex; the wiki documents regex filtering and CPU-architecture filename heuristics ([Obtainium source rules](https://wiki.obtainium.imranr.dev/sources/)). Set `versionName` to match the tag's semantic version (`v1.2.3` tag and `1.2.3` versionName); the tag itself is selected by the GitHub source. The exact URL users add is the repository URL: `https://github.com/<OWNER>/<REPO>` (not the asset URL); Obtainium then follows releases and selects the APK asset. For a direct, non-updating install, use the asset URL, but that forfeits GitHub release tracking.
+Obtainium's GitHub source reads release metadata/assets; the asset must be a directly downloadable `.apk`. Use one universal APK named predictably (for example `BlueShark-v1.2.3.apk`) to avoid architecture filtering and split-selection prompts. If publishing multiple APKs, users must configure Obtainium's APK regex; the wiki documents regex filtering and CPU-architecture filename heuristics ([Obtainium source rules](https://wiki.obtainium.imranr.dev/sources/)). Set `versionName` to match the tag's semantic version (`v1.2.3` tag and `1.2.3` versionName); the tag itself is selected by the GitHub source. The exact URL users add is the repository URL: `https://github.com/<OWNER>/<REPO>` (not the asset URL); Obtainium then follows releases and selects the APK asset. For a direct, non-updating install, use the asset URL, but that forfeits GitHub release tracking.
 
 ## Recommended architecture and open-source references
 

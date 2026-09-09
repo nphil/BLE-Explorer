@@ -18,14 +18,14 @@
         tools:ignore="QueryAllPackagesPermission" />
 
     <application
-        android:name=".BleStudioApp"
+        android:name=".BlueSharkApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:enableOnBackInvokedCallback="true"
-        android:theme="@style/Theme.BleStudio">
+        android:theme="@style/Theme.BlueShark">
 
         <activity
             android:name=".MainActivity"

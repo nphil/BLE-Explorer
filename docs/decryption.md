@@ -5,7 +5,7 @@ They encrypt the *payload* — inside the ATT write, inside the advertisement's 
 a key the vendor app holds. An HCI snoop capture therefore contains the ciphertext and nothing
 else, and the capture is useless until the key is supplied.
 
-BLE Studio's answer is a scheme *description*, not a decoder per vendor. Sessions → **Decrypt**
+BlueShark's answer is a scheme *description*, not a decoder per vendor. Sessions → **Decrypt**
 lets you say which bytes are the nonce, which are the AAD, which are the tag and which are the
 ciphertext, pick a primitive, paste the key, and the timeline gains a second line per frame. The
 presets for Xiaomi, Tuya and Telink are conveniences built out of exactly the same parts you have
@@ -21,7 +21,7 @@ Two rules are absolute:
 
 ## 1. How a scheme is modelled
 
-`CipherScheme` (`android/app/src/main/kotlin/dev/nphil/blestudio/model/SessionModels.kt`) is the
+`CipherScheme` (`android/app/src/main/kotlin/dev/nphil/blueshark/model/SessionModels.kt`) is the
 whole vocabulary:
 
 | Field | Meaning |
@@ -111,7 +111,7 @@ community extractors that read it are
 Home Assistant's own Xiaomi BLE config flow, which asks for the bindkey and stores it in the
 config entry — so an already-integrated device's key can be read out of
 `.storage/core.config_entries`. On a rooted phone the Mi Home app keeps it in its own database.
-BLE Studio does not log into anything: paste the 16 bytes.
+BlueShark does not log into anything: paste the 16 bytes.
 
 ### 3.2 Tuya BLE — **EXPERIMENTAL** (layout cited, no public vector)
 
@@ -142,7 +142,7 @@ from the cited source; only the *proof* is missing.
 project, link the app account that owns the device, and read the device's `local_key` from
 *Devices → Device Details*, or via the `/v1.0/devices/{id}` API — this is what
 [`tuya-device-sharing-sdk`](https://github.com/tuya/tuya-device-sharing-sdk) and the HA Tuya
-integration use. `tuya-cli wizard` automates the same flow. BLE Studio implements none of it.
+integration use. `tuya-cli wizard` automates the same flow. BlueShark implements none of it.
 
 ### 3.3 Telink private mesh — **EXPERIMENTAL** (community sources only)
 

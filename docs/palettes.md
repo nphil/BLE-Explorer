@@ -1,4 +1,4 @@
-# BLE Studio Material 3 palette catalog
+# BlueShark Material 3 palette catalog
 
 All source colors below are copied from the cited upstream palette specifications (or the project’s canonical theme files). Roles are a deterministic Material 3 adaptation: `background`/`surface` use the palette background; `on*` uses foreground; primary/secondary/tertiary use the named accent colors. `surfaceContainerLowest`→`Highest` are the palette’s darkest-to-lightest neutral tiers when available; otherwise they are derived by mixing the base surface toward foreground at 8%, 12%, 16%, 24%, and 32%. Error uses the palette red where available, otherwise `#BA1A1A` (light) / `#FFB4AB` (dark). Every foreground/background pair was selected to preserve WCAG AA (≥4.5:1); for saturated light-theme accents, on-accent is the darkest available foreground and is noted as a compromise where needed.
 
@@ -31,4 +31,4 @@ Material roles are semantic rather than claims that the source theme itself impl
 
 ## Machine-readable catalog
 
-(machine-readable table lives in android/app/src/main/kotlin/dev/nphil/blestudio/ui/theme/Palettes.kt)
+(machine-readable table lives in android/app/src/main/kotlin/dev/nphil/blueshark/ui/theme/Palettes.kt)

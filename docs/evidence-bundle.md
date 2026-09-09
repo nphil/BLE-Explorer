@@ -1,13 +1,13 @@
 # Evidence bundle → Home Assistant integration
 
-This is the contract between BLE Studio for Android and whoever (human or AI agent) writes
+This is the contract between BlueShark for Android and whoever (human or AI agent) writes
 the Home Assistant integration for a reverse-engineered device. Feed the agent the
 **evidence bundle JSON** exported from Sessions → Export and point it at this file.
 
 ## 1. What the bundle contains
 
 `EvidenceBundle { schemaVersion, appVersion, session }` — the Kotlin source of truth is
-`android/app/src/main/kotlin/dev/nphil/blestudio/model/SessionModels.kt`.
+`android/app/src/main/kotlin/dev/nphil/blueshark/model/SessionModels.kt`.
 
 | Section | Use it for |
 | --- | --- |
@@ -24,7 +24,7 @@ the Home Assistant integration for a reverse-engineered device. Feed the agent t
 | `session.environment` (`CaptureEnvironment`) | Android version/fingerprint, vendor app package+version, HCI snoop mode. `hciSnoopMode != "full"` means payloads may be truncated: distrust long frames. |
 
 The **HA install profile** (`HaInstallProfile`, schema_version 2) is the *minimal* strict
-subset consumed by the shipped `ble_studio` integration (fixed-payload buttons). The
+subset consumed by the shipped `blueshark` integration (fixed-payload buttons). The
 evidence bundle is the *maximal* record used to write a full-featured integration.
 
 ## 2. Reliability rules the generated integration must follow
@@ -54,7 +54,7 @@ section 4). These are not optional.
 [ ] For each NotificationSpec: decode fields with offsets/scale; entity type; unit.
 [ ] Cross-check protocol hypotheses against ≥3 events before encoding them in code.
 [ ] Implement: codec.py (pure), client.py (supervisor+lock+timeouts+correlation), coordinator.py, config_flow.py, entities, manifest.json, strings.json, tests/.
-[ ] Mirror packaging from custom_components/ble_studio (hacs.json, brand assets, README).
+[ ] Mirror packaging from custom_components/blueshark (hacs.json, brand assets, README).
 ```
 
 Anything the bundle does not show is unknown. Say so in the README of the generated integration rather than guessing.

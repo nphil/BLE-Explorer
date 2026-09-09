@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "BLE Studio"
+rootProject.name = "BlueShark"
 include(":app")

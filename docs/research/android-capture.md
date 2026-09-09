@@ -1,4 +1,4 @@
-# BLE Studio capture and reverse-engineering research
+# BlueShark capture and reverse-engineering research
 
 **Scope.** This report is implementation research for a Kotlin/Compose Android tablet app that captures and explains BLE traffic, explores GATT, labels/replays commands, and exports evidence. Facts marked **[PROVEN]** are directly supported by the cited AOSP, Android Developers, Bluetooth SIG, or GitHub source. Facts marked **[INFERENCE]** are engineering conclusions that must be verified on the owner’s tablet/phone and OEM build.
 
@@ -129,7 +129,7 @@ Use a UserService to:
 
 **[PROVEN]** The official Shizuku demo implements exactly this architecture: `DemoActivity` constructs `Shizuku.UserServiceArgs`, calls `bindUserService`, and receives an AIDL stub; `UserService` returns `pid`/`uid` and implements `destroy()`/`System.exit(0)`. Sources: [DemoActivity.java](https://raw.githubusercontent.com/RikkaApps/Shizuku-API/master/demo/src/main/java/rikka/shizuku/demo/DemoActivity.java), [UserService.java](https://raw.githubusercontent.com/RikkaApps/Shizuku-API/master/demo/src/main/java/rikka/shizuku/demo/service/UserService.java), [IUserService.aidl](https://raw.githubusercontent.com/RikkaApps/Shizuku-API/master/demo/src/main/aidl/rikka/shizuku/demo/IUserService.aidl).
 
-### BLE permissions for BLE Studio itself
+### BLE permissions for BlueShark itself
 
 **[PROVEN]** For target SDK 31+, Android requires runtime `BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, and `BLUETOOTH_CONNECT` for scanning, advertising, and communicating with paired devices. `BLUETOOTH_SCAN` may use `android:usesPermissionFlags="neverForLocation"` only when the app can strongly assert it never derives location. Source: [Android Bluetooth permissions](https://developer.android.com/develop/connectivity/bluetooth/bt-permissions).
 
@@ -288,7 +288,7 @@ device-name prefix:          IDM-
 
 Source: [idotmatrix/const.py](https://raw.githubusercontent.com/derkalle4/python3-idotmatrix-library/main/idotmatrix/const.py).
 
-The companion client documents concrete commands such as clock mode, display text, full-screen color, pixel color, and image writes. Source: [python3-idotmatrix-client README](https://raw.githubusercontent.com/derkalle4/python3-idotmatrix-client/main/README.md). This is strong prior art for BLE Studio’s “label/replay/export” workflow, but it does not establish that the owner’s clock is iDotMatrix.
+The companion client documents concrete commands such as clock mode, display text, full-screen color, pixel color, and image writes. Source: [python3-idotmatrix-client README](https://raw.githubusercontent.com/derkalle4/python3-idotmatrix-client/main/README.md). This is strong prior art for BlueShark’s “label/replay/export” workflow, but it does not establish that the owner’s clock is iDotMatrix.
 
 ### Glance Clock
 

@@ -1,16 +1,16 @@
-name: BLE Studio
-version: "0.2.0"
-slug: ble_studio
-description: Web workbench for reviewing BLE captures; Bluetooth is provided by the BLE Studio integration.
-url: https://github.com/nphil/BLE-Studio
+name: BlueShark
+version: "0.3.0"
+slug: blueshark
+description: Web workbench for reviewing BLE captures; Bluetooth is provided by the BlueShark integration.
+url: https://github.com/nphil/BlueShark
 startup: services
 boot: auto
 ingress: true
 ingress_port: 8080
 init: false
 panel_icon: mdi:bluetooth
-panel_title: BLE Studio
-image: ghcr.io/nphil/ble-studio
+panel_title: BlueShark
+image: ghcr.io/nphil/blueshark
 arch:
   - amd64
   - aarch64

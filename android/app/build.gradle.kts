@@ -7,7 +7,7 @@ plugins {
 }
 
 // Version is derived from the git tag on CI (v1.2.3 -> 1.2.3 / code from components).
-val versionFromEnv = providers.environmentVariable("BLE_STUDIO_VERSION").orNull?.removePrefix("v")
+val versionFromEnv = providers.environmentVariable("BLUESHARK_VERSION").orNull?.removePrefix("v")
 val appVersionName = versionFromEnv ?: "0.0.0-dev"
 val appVersionCode = appVersionName.substringBefore('-').split('.').let { parts ->
     val (major, minor, patch) = (parts + listOf("0", "0", "0")).take(3).map { it.toIntOrNull() ?: 0 }
@@ -15,11 +15,11 @@ val appVersionCode = appVersionName.substringBefore('-').split('.').let { parts 
 }.coerceAtLeast(1)
 
 android {
-    namespace = "dev.nphil.blestudio"
+    namespace = "dev.nphil.blueshark"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "dev.nphil.blestudio"
+        applicationId = "dev.nphil.blueshark"
         minSdk = 31
         targetSdk = 37
         versionCode = appVersionCode

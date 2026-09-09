@@ -1,31 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Source art is on a 512 grid; scale into the 72dp safe zone centered at 54,54. -->
-    <group
-        android:scaleX="0.140625"
-        android:scaleY="0.140625"
-        android:translateX="18"
-        android:translateY="18">
-        <path
-            android:pathData="M214,104v304l102,-88l-186,-158M130,350l186,-158l-102,-88"
-            android:strokeColor="#FFFFFFFF"
-            android:strokeWidth="34"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round" />
-        <path
-            android:pathData="M356,214a62,62 0 0 1 0,84"
-            android:strokeColor="#FF7DEBFF"
-            android:strokeWidth="26"
-            android:strokeLineCap="round" />
-        <path
-            android:pathData="M400,174a122,122 0 0 1 0,164"
-            android:strokeColor="#FF7DEBFF"
-            android:strokeAlpha="0.6"
-            android:strokeWidth="26"
-            android:strokeLineCap="round" />
+    <!-- Source art on a 512 grid (branding/icon.svg), scaled to 64dp and centred in the safe zone. -->
+    <group android:scaleX="0.125" android:scaleY="0.125" android:translateX="18.6" android:translateY="24.25">
+        <group android:translateY="12">
+            <path android:pathData="M 62 264 C 120 214, 190 194, 262 196 C 270 172, 296 128, 340 98 C 350 92, 358 100, 356 110 C 348 150, 342 178, 334 204 C 364 214, 392 228, 414 244 C 436 214, 462 176, 488 150 C 496 144, 504 150, 500 160 C 488 200, 470 232, 454 260 C 470 290, 488 322, 500 360 C 504 370, 496 376, 488 370 C 462 344, 436 314, 414 284 C 386 300, 352 312, 316 318 C 306 344, 292 366, 274 384 C 266 392, 256 388, 256 380 C 260 358, 260 340, 258 322 C 186 322, 116 302, 62 264 Z" android:fillColor="#06122F" android:fillAlpha="0.32" />
+        </group>
+        <path android:pathData="M 62 264 C 120 214, 190 194, 262 196 C 270 172, 296 128, 340 98 C 350 92, 358 100, 356 110 C 348 150, 342 178, 334 204 C 364 214, 392 228, 414 244 C 436 214, 462 176, 488 150 C 496 144, 504 150, 500 160 C 488 200, 470 232, 454 260 C 470 290, 488 322, 500 360 C 504 370, 496 376, 488 370 C 462 344, 436 314, 414 284 C 386 300, 352 312, 316 318 C 306 344, 292 366, 274 384 C 266 392, 256 388, 256 380 C 260 358, 260 340, 258 322 C 186 322, 116 302, 62 264 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="linear" android:startX="0" android:startY="92" android:endX="0" android:endY="384">
+                    <item android:offset="0" android:color="#FFFFFFFF" />
+                    <item android:offset="1" android:color="#FFD6F3FF" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <path android:pathData="M 236 246 q -5 16 0 32" android:strokeColor="#1D4ED8" android:strokeWidth="7" android:strokeLineCap="round" android:strokeAlpha="0.65" />
+        <path android:pathData="M 256 248 q -5 16 0 32" android:strokeColor="#1D4ED8" android:strokeWidth="7" android:strokeLineCap="round" android:strokeAlpha="0.65" />
+        <path android:pathData="M 276 250 q -5 16 0 32" android:strokeColor="#1D4ED8" android:strokeWidth="7" android:strokeLineCap="round" android:strokeAlpha="0.65" />
+        <path android:pathData="M 126 250 m -13 0 a 13 13 0 1 0 26 0 a 13 13 0 1 0 -26 0" android:fillColor="#0B1B4D" />
+        <path android:pathData="M 131 245 m -4.5 0 a 4.5 4.5 0 1 0 9 0 a 4.5 4.5 0 1 0 -9 0" android:fillColor="#FFFFFF" />
+        <path android:pathData="M 74 214 a 58 58 0 0 0 -16 44" android:strokeColor="#7DEBFF" android:strokeWidth="18" android:strokeLineCap="round" android:strokeAlpha="0.95" />
+        <path android:pathData="M 56 168 a 106 106 0 0 0 -28 88" android:strokeColor="#7DEBFF" android:strokeWidth="18" android:strokeLineCap="round" android:strokeAlpha="0.55" />
     </group>
 </vector>

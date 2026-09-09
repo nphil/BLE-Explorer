@@ -1,4 +1,4 @@
-# BLE Studio reverse-engineering research: Home Assistant BLE reference integrations
+# BlueShark reverse-engineering research: Home Assistant BLE reference integrations
 
 ## Scope and reading method
 
@@ -88,7 +88,7 @@ Fluval has the most explicit GATT bounding of the three. It sets connect timeout
 
 Commands are serialized under `_command_lock`; the device layer adds a whole-command transaction lock and a timeout-triggered connection reset. FACEBD writes may be repeated for verification, followed by an explicit state read if a pushed update did not match: `nphil/fluvalble/custom_components/fluvalble/core/client.py:L754-L913`, `nphil/fluvalble/custom_components/fluvalble/core/device.py:L469-L540`.
 
-The connection route is refreshed before each new connection and is supplied as `ble_device_callback` to `establish_connection`, allowing HA/bleak-retry-connector to select a current adapter/proxy path. This is the pattern BLE Studio should capture as an explicit route-refresh fact: `nphil/fluvalble/custom_components/fluvalble/core/device.py:L2838-L2925`.
+The connection route is refreshed before each new connection and is supplied as `ble_device_callback` to `establish_connection`, allowing HA/bleak-retry-connector to select a current adapter/proxy path. This is the pattern BlueShark should capture as an explicit route-refresh fact: `nphil/fluvalble/custom_components/fluvalble/core/device.py:L2838-L2925`.
 
 The tradeoff is that there is no integration-wide semaphore for proxy slots. A persistent Fluval entry deliberately consumes one slot, and multiple guardians/commands can contend unless the active-time option is chosen carefully: `nphil/fluvalble/README.md:L120-L155`, `nphil/fluvalble/README.md:L326-L353`.
 
@@ -107,7 +107,7 @@ CI runs lint/ruff, manifest/translation checks, pytest on Python 3.11/3.12, soft
 - MTU-aware chunking for long modern schedules: `core/client.py:L625-L678`.
 - Protocol-level validation for classic checksums, encrypted frames, and CBOR decode: `core/protocol.py:L428-L472`, `core/protocol.py:L636-L783`.
 
-**Residual hazards to carry into BLE Studio requirements**
+**Residual hazards to carry into BlueShark requirements**
 
 1. **Manifest/callback connectability is implicit.** The manifest does not set `connectable: true`, and setup registers an address-only callback. HA can therefore deliver address-matching observations that are not the best connectable route. The client later repairs this for a new connection via `async_ble_device_from_address(..., connectable=True)`, but an exporter should record whether a discovery/callback matcher was connectable-constrained: `manifest.json:L1-L90`, `__init__.py:L604-L632`, `core/device.py:L2838-L2925`. **[INFERENCE]** This is a stale/nonconnectable-route risk, not proof that every such frame causes a failed connection.
 2. **Fixed 300-second reachability is not HA's learned unavailable interval.** It is intentionally custom and `touch_seen()` counts command/connection activity as well as advertisements. A device can therefore look recently reachable after GATT activity even if scanner advertisements have stopped: `core/device.py:L540-L603`, `core/device.py:L722-L750`. **[INFERENCE]** Prefer raw advertisement age plus HA's unavailable tracker in generated code unless device behavior requires a custom policy.
@@ -199,7 +199,7 @@ The README credits `hunterjm/ac-infinity-hacs`/`ac-infinity-ble`, `mtsphere`'s A
 - Record-less advertisement frames still notify listeners, refresh the latest BLE route, re-arm availability, and drive poll scheduling: `coordinator.py:L186-L264`, `tests/test_coordinator_events.py:L1-L100`.
 - Global two-poll semaphore, `45 s` poll deadline, cached-service invalidation, operation lock, connect lock, and bounded retry layering: `coordinator.py:L35-L59`, `coordinator.py:L150-L184`, `ac_infinity_ble/device.py:L1-L31`, `ac_infinity_ble/device.py:L570-L688`.
 
-**Residual hazards to carry into BLE Studio requirements**
+**Residual hazards to carry into BlueShark requirements**
 
 1. **The poll route check does not update the controller route.** `_needs_poll()` proves that a current connectable route exists, but `ACInfinityDevice.update_ble_device()` only receives the `service_info.device` from callbacks. A poll/command can therefore use an older proxy path until another dispatched event updates it: `coordinator.py:L132-L148`, `coordinator.py:L186-L221`, `device.py:L42-L90`. **[INFERENCE]** This is the clearest missing HA Bluetooth refresh/route handoff in the AC implementation.
 2. **Notification timeout becomes a false-success path.** `_execute_command_locked()` catches the five-second timeout and returns `None`; the retry decorator sees no exception. High-level `turn_on`, `turn_off`, `set_speed`, AUTO, and threshold setters then commit local state after `await _send_command()` without testing for `None`: `ac_infinity_ble/device.py:L647-L688`, `device.py:L177-L372`. This can leave Home Assistant showing a change that was never confirmed.
@@ -285,7 +285,7 @@ CI runs pytest on Python 3.13 plus Hassfest and HACS validation, with branding i
 - Honest command confirmation, pending-future cleanup, frame validation, last-known-good state, watchdog unavailable/reconnect tiers: `pybedjet/__init__.py:L450-L550`, `pybedjet/__init__.py:L677-L780`, `codec.py:L300-L432`.
 - Push coordinator and meaningful-change throttling avoid unnecessary polling/rendering: `coordinator.py:L1-L57`, `pybedjet/__init__.py:L677-L710`.
 
-**Residual hazards to carry into BLE Studio requirements**
+**Residual hazards to carry into BlueShark requirements**
 
 1. **No HA route refresh before reconnect.** Setup gets one cached connectable route; later advertisements replace `_ble_device`, but `_connect_once()` passes that object directly to `establish_connection` rather than asking HA for the freshest connectable path. The address-only callback also does not explicitly constrain connectability: `custom_components/bedjet/__init__.py:L32-L86`, `pybedjet/__init__.py:L319-L338`, `pybedjet/__init__.py:L598-L632`. **[INFERENCE]** A stale or nonconnectable proxy route can be selected after topology changes.
 2. **There is no command-operation lock.** `_run_command()` appends predicate/future tuples to `_pending`, writes immediately, and waits. Multiple service calls can write concurrently; all pending predicates are checked against each incoming state. The tail read, bio read, watchdog probe, and command writes also have no shared GATT queue: `pybedjet/__init__.py:L450-L550`, `pybedjet/__init__.py:L711-L805`. **[INFERENCE]** This is the most direct serialization hazard in the reference set.
@@ -298,7 +298,7 @@ CI runs pytest on Python 3.13 plus Hassfest and HACS validation, with branding i
 
 ---
 
-# 4. Cross-integration synthesis for BLE Studio
+# 4. Cross-integration synthesis for BlueShark
 
 ## 4.1 Reliability comparison
 
@@ -330,7 +330,7 @@ CI runs pytest on Python 3.13 plus Hassfest and HACS validation, with branding i
 
 ## 4.3 Reliability-first generated integration template
 
-The following is a proposal for code generated from a BLE Studio export, not a claim that any one reference implements every item.
+The following is a proposal for code generated from a BlueShark export, not a claim that any one reference implements every item.
 
 ### A. Separate evidence, protocol hypotheses, and HA behavior
 
@@ -445,7 +445,7 @@ The references show why these are behavior tests rather than source-shape tests:
 
 ---
 
-# 5. BLE Studio export schema proposal
+# 5. BlueShark export schema proposal
 
 ## 5.1 Required export content
 
@@ -491,8 +491,8 @@ Do not collapse a field with conflicting evidence into one unqualified value. Ke
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ble-studio.local/schema/ble-evidence-bundle-2020-12.json",
-  "title": "BLE Studio evidence bundle",
+  "$id": "https://blueshark.local/schema/ble-evidence-bundle-2020-12.json",
+  "title": "BlueShark evidence bundle",
   "description": "Raw BLE evidence and derived protocol facts used to generate a Home Assistant custom integration.",
   "type": "object",
   "additionalProperties": false,
