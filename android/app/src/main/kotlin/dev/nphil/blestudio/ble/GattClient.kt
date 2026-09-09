@@ -205,6 +205,7 @@ class GattClient(
         // Counted after the list is published, so a reader that takes the count first and the
         // facts second can only ever under-count - which the next save picks up.
         linkSamples.incrementAndGet()
+        emitSystem(AttOperation.OTHER, "Link established in $linkMs ms", status = BluetoothGatt.GATT_SUCCESS)
 
         queue.submit<Unit>(GattOpKey.Discover, "Service discovery", discoverTimeoutMs) {
             active.link().discoverServices()

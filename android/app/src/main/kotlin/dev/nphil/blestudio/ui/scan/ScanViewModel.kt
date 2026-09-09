@@ -133,10 +133,11 @@ class ScanViewModel(private val container: AppContainer) : ViewModel() {
     val saved: SharedFlow<SavedToSession> = _saved.asSharedFlow()
 
     /**
-     * Live link-setup samples already written per session id.
+     * [GattClient.linkSampleCount] as of the last save, per session id.
      *
-     * [GattClient] accumulates them for as long as the screen lives, so a second save into the same
-     * session must append only the tail. Read from the store's writer thread, hence concurrent.
+     * The client accumulates link-setup timings for as long as the screen lives and caps the list
+     * it publishes, so "what is new since the last save" is a difference of arrival counts, never
+     * an offset into that list. Read from the store's writer thread, hence concurrent.
      */
     private val mergedReconnectSamples = ConcurrentHashMap<String, Int>()
 
@@ -336,7 +337,10 @@ class ScanViewModel(private val container: AppContainer) : ViewModel() {
 
     fun saveToSession() {
         val picker = _state.value.sessionPicker ?: return
-        val live = _state.value.connection
+        // Counted before the facts are read, so the count can only lag the list, never lead it:
+        // an undercount re-offers a sample on the next save, an overcount would drop one.
+        val linkSamples = gatt.linkSampleCount
+        val live = _state.value.connection.copy(facts = gatt.facts.value)
         val address = live.address ?: _state.value.selectedAddress ?: return
         if (picker.selectedId == null && picker.newName.isBlank()) {
             _messages.tryEmit("Give the session a name.")
@@ -348,13 +352,15 @@ class ScanViewModel(private val container: AppContainer) : ViewModel() {
             try {
                 val target = picker.selectedId
                 val stored = if (target == null) {
-                    container.sessions.save(composeSession(null, live, name, address))
+                    container.sessions.save(composeSession(null, live, linkSamples, name, address))
                 } else {
                     // Patched inside the store's lock: the capture and relay screens append to the
                     // same file, and none of their records may be lost to this save.
-                    container.sessions.update(target) { base -> composeSession(base, live, name, address) }
+                    container.sessions.update(target) { base ->
+                        composeSession(base, live, linkSamples, name, address)
+                    }
                 }
-                mergedReconnectSamples[stored.id] = live.facts.reconnectSamplesMs.size
+                mergedReconnectSamples[stored.id] = linkSamples
                 _state.update { it.copy(sessionPicker = null) }
                 _messages.tryEmit("Saved to \"${stored.name}\"")
                 _saved.tryEmit(SavedToSession(stored.id))
@@ -376,6 +382,7 @@ class ScanViewModel(private val container: AppContainer) : ViewModel() {
     private fun composeSession(
         existing: CaptureSession?,
         live: ConnectionUiState,
+        linkSamples: Int,
         newName: String,
         address: String,
     ): CaptureSession {
@@ -400,7 +407,11 @@ class ScanViewModel(private val container: AppContainer) : ViewModel() {
             device = identity,
             advertisements = mergeAdvertisements(base.advertisements, sample),
             gatt = live.database ?: base.gatt,
-            connection = mergeLiveFacts(base.connection, live.facts, mergedReconnectSamples[base.id] ?: 0),
+            connection = mergeLiveFacts(
+                base.connection,
+                live.facts,
+                newSamples = linkSamples - (mergedReconnectSamples[base.id] ?: 0),
+            ),
             events = base.events + live.events.filterNot { it.id in known },
         )
     }
