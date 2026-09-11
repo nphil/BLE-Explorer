@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .const import (
+    HUB_UNIQUE_ID,
     CONF_ADDRESS,
     CONF_ALLOW_WRITES,
     CONF_CHARACTERISTIC,
@@ -98,6 +99,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up a legacy profile-import entry or a guided onboarding entry."""
 
     hass.data.setdefault(DOMAIN, {})
+    if entry.unique_id == HUB_UNIQUE_ID or not entry.data:
+        # The panel is registered in async_setup; this entry exists purely to trigger it.
+        return True
     if CONF_CHARACTERISTIC in entry.data:
         return await _async_setup_guided_entry(hass, entry)
     return await _async_setup_legacy_entry(hass, entry)

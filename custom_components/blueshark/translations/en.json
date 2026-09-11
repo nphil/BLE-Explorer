@@ -5,7 +5,8 @@
         "title": "Add a BlueShark device",
         "menu_options": {
           "guided": "Guided setup (recommended) - pick a device Home Assistant can already hear",
-          "manual_profile": "Manual profile JSON (advanced)"
+          "manual_profile": "Manual profile JSON (advanced)",
+          "wizard": "Open the guided wizard (recommended)"
         }
       },
       "guided": {
@@ -53,7 +54,7 @@
     "abort": {
       "no_devices_found": "No connectable Bluetooth devices are currently visible. Wait for the device to advertise (or move a proxy closer) and try again.",
       "invalid_address": "No device address was supplied.",
-      "already_configured": "This device is already configured."
+      "already_configured": "The BlueShark wizard is already installed; open it from the sidebar."
     }
   },
   "options": {

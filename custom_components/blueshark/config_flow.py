@@ -30,6 +30,8 @@ from homeassistant.data_entry_flow import FlowResult
 from .codecs import list_codecs
 from .command_map import CommandMapError, validate_command_map
 from .const import (
+    HUB_TITLE,
+    HUB_UNIQUE_ID,
     CONF_ADDRESS,
     CONF_ALLOW_WRITES,
     CONF_CHARACTERISTIC,
@@ -115,7 +117,16 @@ class BlueSharkConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input: dict[str, object] | None = None) -> FlowResult:
         """+ Add Integration: choose the guided device picker or the manual profile form."""
 
-        return self.async_show_menu(step_id="user", menu_options=["guided", "manual_profile"])
+        return self.async_show_menu(
+            step_id="user", menu_options=["wizard", "guided", "manual_profile"]
+        )
+
+    async def async_step_wizard(self, user_input: dict[str, object] | None = None) -> FlowResult:
+        """Install the panel entry: the wizard itself onboards devices, one entry each."""
+
+        await self.async_set_unique_id(HUB_UNIQUE_ID)
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(title=HUB_TITLE, data={})
 
     # ------------------------------------------------------------------ guided: device picker
 

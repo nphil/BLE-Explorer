@@ -53,6 +53,12 @@ WS_ERROR_UNSUPPORTED = "unsupported"
 # --- Config flow sources / discovery keys. ---
 SOURCE_PANEL = "panel"
 
+# A single "hub" entry whose only purpose is to make Home Assistant set the component up when no
+# device has been onboarded yet: with zero entries HA never calls async_setup, so the panel that
+# exists to create the first device would never be registered.
+HUB_UNIQUE_ID = "blueshark-wizard"
+HUB_TITLE = "BlueShark wizard"
+
 # --- Sweep prober defaults (protocol-agnostic; a codec may still decline to supply a canary
 # or a destructive set, in which case the sweep runs without that safety net). ---
 DEFAULT_SWEEP_START = 1
