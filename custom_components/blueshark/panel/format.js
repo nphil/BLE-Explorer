@@ -69,14 +69,19 @@ function humanizeToken(token) {
     .join(' ');
 }
 
+// Real vocabulary from sweep.py's verdict()/interpret_sweep(): accepted, no_response,
+// undecodable, rejected_unknown_id, rejected_other. denied/pending/error are client-side
+// pseudo-verdicts (destructive guard blocked it, row awaiting a reply, the API call itself
+// failed) — they never come from the device but need the same chip treatment.
 const VERDICT_TONES = {
   accepted: { tone: 'success', label: 'Accepted' },
-  rejected: { tone: 'error', label: 'Rejected' },
-  denied: { tone: 'error', label: 'Denied' },
-  error: { tone: 'error', label: 'Error' },
-  unknown: { tone: 'warning', label: 'Unknown' },
+  rejected_unknown_id: { tone: 'error', label: 'Rejected (unknown command)' },
+  rejected_other: { tone: 'error', label: 'Rejected' },
+  undecodable: { tone: 'warning', label: 'Undecodable reply' },
   no_response: { tone: 'neutral', label: 'No response' },
+  denied: { tone: 'error', label: 'Denied' },
   pending: { tone: 'neutral', label: 'Pending' },
+  error: { tone: 'error', label: 'Error' },
 };
 
 /** Verdict string -> chip {tone, label, raw, inferred}. Label always carries text, never color-only. */
@@ -116,15 +121,36 @@ export function formatEvidence(evidence) {
   return evidence.map((item) => String(item ?? '').trim()).filter(Boolean);
 }
 
-/** Family match object -> a display-ready badge, or null when there is no match. */
+const CONFIDENCE_LABELS = {
+  certain: 'Certain',
+  likely: 'Likely',
+  possible: 'Possible',
+};
+
+/** Raw families.py confidence enum ("certain"|"likely"|"possible") -> a capitalized label,
+ * or null when absent. Unknown strings still get a readable label instead of disappearing. */
+export function formatConfidenceLabel(confidenceLabel) {
+  const key = String(confidenceLabel ?? '').trim().toLowerCase();
+  if (!key) return null;
+  return CONFIDENCE_LABELS[key] ?? humanizeToken(key);
+}
+
+/** Family match object -> a display-ready badge, or null when there is no match.
+ * Prefers the engine's categorical confidence_label for the visible text (the real evidence
+ * grade); the numeric confidence (a fixed per-tier value, not a measured probability) is kept
+ * alongside for sorting or a bar width, and only shown as a bare percentage when the categorical
+ * label is missing. */
 export function formatFamilyBadge(family) {
   if (!family || typeof family !== 'object') return null;
   const name = String(family.name ?? '').trim();
   if (!name) return null;
+  const numericConfidence = Number(family.confidence);
+  const confidence = Number.isFinite(numericConfidence) ? numericConfidence : null;
   return {
     id: family.id ?? null,
     name,
-    confidenceLabel: formatConfidence(family.confidence),
+    confidence,
+    confidenceLabel: formatConfidenceLabel(family.confidence_label) ?? formatConfidence(confidence),
     evidence: formatEvidence(family.evidence),
   };
 }
@@ -182,25 +208,35 @@ export function formatProperties(properties) {
 const WRITE_PROPERTIES = new Set(['write', 'write-without-response', 'authenticated-signed-writes']);
 const NOTIFY_PROPERTIES = new Set(['notify', 'indicate']);
 
-/** True when a single characteristic's properties combine a write flavor and a notify flavor. */
-export function hasWriteNotifyPair(properties) {
+/** True when properties include any write flavor (write / write-without-response / signed-writes). */
+export function isWritable(properties) {
   if (!Array.isArray(properties)) return false;
-  let hasWrite = false;
-  let hasNotify = false;
-  for (const raw of properties) {
-    const p = String(raw ?? '').trim().toLowerCase();
-    if (WRITE_PROPERTIES.has(p)) hasWrite = true;
-    if (NOTIFY_PROPERTIES.has(p)) hasNotify = true;
-  }
-  return hasWrite && hasNotify;
+  return properties.some((raw) => WRITE_PROPERTIES.has(String(raw ?? '').trim().toLowerCase()));
 }
 
-/** Combine an opcode byte (0-255) with optional argument hex into one wire payload (lowercase, unspaced). */
-export function buildPayloadFromOpcode(opcode, argumentHex = '') {
+/** True when properties include any notify flavor (notify / indicate). */
+export function isNotifiable(properties) {
+  if (!Array.isArray(properties)) return false;
+  return properties.some((raw) => NOTIFY_PROPERTIES.has(String(raw ?? '').trim().toLowerCase()));
+}
+
+/** True when a single characteristic's properties combine a write flavor and a notify flavor. */
+export function hasWriteNotifyPair(properties) {
+  return isWritable(properties) && isNotifiable(properties);
+}
+
+/** Validate a byte 0-255 (a wire opcode). Throws the same friendly message as buildPayloadFromOpcode. */
+export function parseOpcode(opcode) {
   const op = Number(opcode);
   if (!Number.isInteger(op) || op < 0 || op > 255) {
     throw new Error('Opcode must be a whole number from 0 to 255 (0x00-0xFF).');
   }
+  return op;
+}
+
+/** Combine an opcode byte (0-255) with optional argument hex into one wire payload (lowercase, unspaced). */
+export function buildPayloadFromOpcode(opcode, argumentHex = '') {
+  const op = parseOpcode(opcode);
   const { hex } = parseHex(argumentHex, { allowEmpty: true, maxBytes: MAX_PAYLOAD_BYTES - 1 });
   return op.toString(16).padStart(2, '0') + hex;
 }
@@ -283,4 +319,78 @@ export function sortByRssiDesc(devices) {
     const vb = Number.isFinite(rb) ? rb : -Infinity;
     return vb - va;
   });
+}
+
+/** Given a device's per-source RSSI readings ({source: rssi}), pick the strongest.
+ * Returns {source, rssi} or null for an empty/invalid map. Used to show "which proxy hears
+ * it best" when scan/subscribe delivers one event per proxy rather than one per device. */
+export function pickBestSource(sources) {
+  if (!sources || typeof sources !== 'object') return null;
+  let best = null;
+  for (const [source, rssi] of Object.entries(sources)) {
+    const value = Number(rssi);
+    if (!Number.isFinite(value)) continue;
+    if (!best || value > best.rssi) best = { source, rssi: value };
+  }
+  return best;
+}
+
+/** `decoded` is keyed by which family-specific decoder produced it (e.g. `coolled_panel`:
+ * {id_hex, width, height, colour, firmware}, or `mibeacon`: {frame_control, product_id, ...}) --
+ * this flattens whichever group is present into ordered {label, value} rows, dropping the group
+ * key itself since the inner field names already read naturally. A flat (non-nested) decoded
+ * object is also accepted defensively. `firmware` gets the same "0x21 (33)" treatment as any
+ * other wire byte, since that is how the spec/evidence for this device is written down. */
+export function formatDecodedFacts(decoded) {
+  if (!decoded || typeof decoded !== 'object') return [];
+  const rows = [];
+  const pushField = (key, value) => {
+    if (value === null || value === undefined) return;
+    if (key === 'firmware' && Number.isInteger(Number(value))) {
+      rows.push({ label: humanizeToken(String(key)), value: formatByte(value) });
+      return;
+    }
+    rows.push({ label: humanizeToken(String(key)), value: Array.isArray(value) ? value.join(', ') : String(value) });
+  };
+  for (const [group, value] of Object.entries(decoded)) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      for (const [key, inner] of Object.entries(value)) pushField(key, inner);
+    } else {
+      pushField(group, value);
+    }
+  }
+  return rows;
+}
+
+/** Milliseconds elapsed since a baseline -> "+0 ms" / "+1.3 s", for streamed Listen frames.
+ * A missing baseline (the first frame in a session) always reads as "+0 ms". Never throws. */
+export function formatElapsedSince(atMs, baselineMs) {
+  const at = Number(atMs);
+  if (!Number.isFinite(at)) return '\u2014';
+  // Number.isFinite (unlike the coercing global isFinite) rejects null/undefined/strings
+  // outright, so a genuinely absent baseline (Number(null) === 0 would otherwise sneak through
+  // as "a valid zero baseline") correctly falls back to `at` itself, i.e. zero elapsed.
+  const base = Number.isFinite(baselineMs) ? baselineMs : at;
+  return `+${formatElapsed(Math.max(0, at - base))}`;
+}
+
+/** One-line "0xFFF1 \u2014 write, notify" label for a GATT characteristic picker. */
+export function describeCharacteristic(characteristic) {
+  const uuid = shortUuid(characteristic?.uuid);
+  const properties = formatProperties(characteristic?.properties);
+  return properties.length ? `${uuid} \u2014 ${properties.join(', ')}` : uuid;
+}
+
+// Fixed codec catalog for the Learn step's picker: ids/labels mirror codecs/__init__.py's
+// list_codecs() exactly. There is no WS command to fetch this (the WS API only ever takes a
+// codec_id, never returns the catalog), so it is small and stable enough to keep in sync by hand.
+export const CODEC_CATALOG = [
+  { id: 'raw', label: 'Raw (no framing)' },
+  { id: 'coolled', label: 'CoolLED (CoolLEDX / iLedClock)' },
+  { id: 'prefix_suffix', label: 'Header / trailer / checksum' },
+];
+
+/** codec_id -> its catalog label, or the id itself when unrecognized (forward-compatible). */
+export function describeCodec(codecId) {
+  return CODEC_CATALOG.find((entry) => entry.id === codecId)?.label ?? String(codecId ?? '\u2014');
 }

@@ -60,3 +60,16 @@ DEFAULT_SWEEP_END = 0x14
 DEFAULT_SWEEP_STEP_DELAY_MS = 400
 DEFAULT_AWAIT_RESPONSE_MS = 1500
 CANARY_INTERVAL = 5
+
+# --- hass.data[DOMAIN] internal bookkeeping keys (not part of any external contract). ---
+DATA_TRANSPORTS = "transports"
+DATA_SWEEP_RUNS = "sweep_runs"
+
+# --- WS presentation defaults. ---
+OPCODE_LOG_TAIL_DISPLAY = 50
+
+# --- Services (custom_components/blueshark/services.yaml). ---
+SERVICE_SEND_RAW = "send_raw"
+SERVICE_PROBE_OPCODE = "probe_opcode"
+SERVICE_PROBE_SWEEP = "probe_sweep"
+SERVICE_LISTEN = "listen"

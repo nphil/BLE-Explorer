@@ -2,6 +2,32 @@
   "config": {
     "step": {
       "user": {
+        "title": "Add a BlueShark device",
+        "menu_options": {
+          "guided": "Guided setup (recommended) - pick a device Home Assistant can already hear",
+          "manual_profile": "Manual profile JSON (advanced)"
+        }
+      },
+      "guided": {
+        "title": "Choose a device",
+        "description": "These are the connectable Bluetooth devices Home Assistant currently hears. Pick one to identify and set up.",
+        "data": {
+          "address": "Device"
+        }
+      },
+      "bluetooth_confirm": {
+        "title": "Set up {name}?",
+        "description": "Address: {address}\nBest family match: {family}\nEvidence: {evidence}"
+      },
+      "codec": {
+        "title": "Confirm the command channel for {name}",
+        "description": "Address: {address}. These defaults come from the family match above (when there is one) - override them if you know better, or leave them and refine later from the onboarding panel or this entry's options.",
+        "data": {
+          "codec_id": "Codec",
+          "characteristic": "Command characteristic (UUID)"
+        }
+      },
+      "manual_profile": {
         "title": "Add a BlueShark command profile",
         "description": "Enter a manually captured, tested profile. Writes are off by default. {validation_error}",
         "data": {
@@ -21,8 +47,31 @@
       }
     },
     "error": {
-      "invalid_profile": "Profile validation failed"
+      "invalid_profile": "Profile validation failed",
+      "invalid_characteristic": "Enter a valid characteristic UUID (short or full form)"
+    },
+    "abort": {
+      "no_devices_found": "No connectable Bluetooth devices are currently visible. Wait for the device to advertise (or move a proxy closer) and try again.",
+      "invalid_address": "No device address was supplied.",
+      "already_configured": "This device is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "BlueShark device options",
+        "description": "Command map JSON follows the same schema the onboarding panel writes: {\"key\": {\"name\":..., \"kind\": \"button\"|\"number\"|\"switch\", ...}}. {command_map_error}\n\nRecent opcode log:\n{opcode_log_tail}",
+        "data": {
+          "idle_disconnect_s": "Idle disconnect (seconds, 0 = never)",
+          "codec_id": "Codec",
+          "characteristic": "Command characteristic (UUID)",
+          "command_map": "Command map (JSON)"
+        }
+      }
+    },
+    "error": {
+      "invalid_characteristic": "Enter a valid characteristic UUID (short or full form)",
+      "invalid_command_map": "Command map validation failed"
     }
   }
 }
-

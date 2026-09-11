@@ -1,0 +1,205 @@
+send_raw:
+  name: Send raw command
+  description: >-
+    Write a payload to a BlueShark device's command characteristic and report
+    what came back. The same engine call the panel's "Learn" step uses.
+  target:
+    device:
+      integration: blueshark
+  fields:
+    payload_hex:
+      name: Payload (hex)
+      description: >-
+        Bytes to send, as hex (spaces optional), before codec framing - or the
+        exact on-wire bytes when "Already framed" is enabled.
+      required: true
+      example: "08ff"
+      selector:
+        text:
+    characteristic:
+      name: Characteristic
+      description: >-
+        Override the characteristic UUID to write to. Defaults to the
+        device's configured command characteristic.
+      required: false
+      selector:
+        text:
+    codec_id:
+      name: Codec
+      description: Override the framing codec. Defaults to the device's configured codec.
+      required: false
+      selector:
+        select:
+          options:
+            - raw
+            - coolled
+            - prefix_suffix
+    framed:
+      name: Already framed
+      description: Skip codec framing - payload_hex is the exact bytes to write.
+      required: false
+      default: false
+      selector:
+        boolean:
+    await_response_ms:
+      name: Response wait
+      description: How long to wait for a notification before treating the request as unanswered.
+      required: false
+      default: 1500
+      selector:
+        number:
+          min: 0
+          max: 60000
+          unit_of_measurement: ms
+
+probe_opcode:
+  name: Probe opcode
+  description: >-
+    Send a single opcode, with an optional argument, to a BlueShark device
+    and classify the reply (accepted / unknown id / other rejection / no
+    response).
+  target:
+    device:
+      integration: blueshark
+  fields:
+    opcode:
+      name: Opcode
+      description: The command byte to probe.
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 255
+    argument_hex:
+      name: Argument (hex)
+      description: Bytes appended after the opcode, as hex (spaces optional).
+      required: false
+      selector:
+        text:
+    characteristic:
+      name: Characteristic
+      description: >-
+        Override the characteristic UUID to write to. Defaults to the
+        device's configured command characteristic.
+      required: false
+      selector:
+        text:
+    codec_id:
+      name: Codec
+      description: Override the framing codec. Defaults to the device's configured codec.
+      required: false
+      selector:
+        select:
+          options:
+            - raw
+            - coolled
+            - prefix_suffix
+    await_response_ms:
+      name: Response wait
+      description: How long to wait for a notification before treating the request as unanswered.
+      required: false
+      default: 1500
+      selector:
+        number:
+          min: 0
+          max: 60000
+          unit_of_measurement: ms
+
+probe_sweep:
+  name: Probe opcode sweep
+  description: >-
+    Sweep a range of opcodes against a BlueShark device, with periodic canary
+    health checks, and report which opcodes were accepted, rejected as
+    unknown, or left unanswered.
+  target:
+    device:
+      integration: blueshark
+  fields:
+    start:
+      name: Start opcode
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 255
+    end:
+      name: End opcode
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 255
+    argument_hex:
+      name: Argument (hex)
+      description: Bytes appended after each probed opcode, as hex (spaces optional).
+      required: false
+      selector:
+        text:
+    include_destructive:
+      name: Include destructive opcodes
+      description: >-
+        Also probe opcodes the codec marks as changing persistent device
+        state. Off by default.
+      required: false
+      default: false
+      selector:
+        boolean:
+    characteristic:
+      name: Characteristic
+      required: false
+      selector:
+        text:
+    codec_id:
+      name: Codec
+      required: false
+      selector:
+        select:
+          options:
+            - raw
+            - coolled
+            - prefix_suffix
+    step_delay_ms:
+      name: Delay between steps
+      required: false
+      default: 400
+      selector:
+        number:
+          min: 0
+          max: 60000
+          unit_of_measurement: ms
+    await_response_ms:
+      name: Response wait per step
+      required: false
+      default: 1500
+      selector:
+        number:
+          min: 0
+          max: 60000
+          unit_of_measurement: ms
+
+listen:
+  name: Listen for notifications
+  description: >-
+    Subscribe to a BlueShark device's notify characteristic for a fixed time
+    and report every frame received, with timestamps.
+  target:
+    device:
+      integration: blueshark
+  fields:
+    characteristic:
+      name: Characteristic
+      description: >-
+        Override the characteristic UUID to subscribe to. Defaults to the
+        device's configured notify characteristic (or its command
+        characteristic, if no separate notify characteristic is set).
+      required: false
+      selector:
+        text:
+    seconds:
+      name: Duration
+      required: true
+      selector:
+        number:
+          min: 0.5
+          max: 300
+          unit_of_measurement: s

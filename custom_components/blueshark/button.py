@@ -19,7 +19,15 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import CONF_ADDRESS, CONF_ALLOW_WRITES, DOMAIN, WRITE_TIMEOUT
+from .const import DOMAIN, WRITE_TIMEOUT
+from .entity_specs import (
+    CommandSpec,
+    RuntimeAvailableMixin,
+    RuntimeListenerMixin,
+    build_button_specs,
+    build_legacy_button_specs,
+    is_legacy_runtime,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,25 +35,32 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities
 ) -> None:
-    """Add buttons for tested, non-synthetic profile commands only."""
+    """Add legacy profile buttons and/or guided command-map buttons for this entry."""
 
     runtime = hass.data[DOMAIN][entry.entry_id]
-    # One lock is shared by every command for this physical device.
-    runtime["write_lock"] = asyncio.Lock()
-    entities = [
-        BleCommandButton(
-            hass=hass,
-            entry=entry,
-            address=runtime["address"],
-            allow_writes=runtime["allow_writes"],
-            write_lock=runtime["write_lock"],
-            command=command,
-            device_name=runtime["profile"]["device"]["name"],
-        )
-        for command in runtime["profile"]["commands"]
-        if not runtime["profile"]["synthetic"] and not command["synthetic"] and command["stage"] == "tested"
-    ]
-    async_add_entities(entities)
+    if is_legacy_runtime(runtime):
+        # One lock is shared by every command for this physical device.
+        runtime["write_lock"] = asyncio.Lock()
+        entities = [
+            BleCommandButton(
+                hass=hass,
+                entry=entry,
+                address=runtime["address"],
+                allow_writes=runtime["allow_writes"],
+                write_lock=runtime["write_lock"],
+                command=command,
+                device_name=runtime["profile"]["device"]["name"],
+            )
+            for command in build_legacy_button_specs(runtime["profile"])
+        ]
+    else:
+        command_map = getattr(runtime, "command_map", None)
+        entities = [
+            BlueSharkCommandButton(runtime, entry, spec)
+            for spec in build_button_specs(command_map)
+        ]
+    if entities:
+        async_add_entities(entities)
 
 
 class BleCommandButton(ButtonEntity):
@@ -172,3 +187,28 @@ class BleCommandButton(ButtonEntity):
                 raise HomeAssistantError("BLE command timed out") from err
             except BleakError as err:
                 raise HomeAssistantError(f"BLE connection/write failed: {err}") from err
+
+
+class BlueSharkCommandButton(RuntimeAvailableMixin, RuntimeListenerMixin, ButtonEntity):
+    """A single guided-onboarding command-map ``button`` entry."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+
+    def __init__(self, runtime: object, entry: ConfigEntry, spec: CommandSpec) -> None:
+        self._runtime = runtime
+        self._spec = spec
+        self._attr_name = spec.name
+        self._attr_unique_id = spec.unique_id(entry.entry_id, "button")
+        device_info = getattr(runtime, "device_info", None)
+        if device_info is not None:
+            self._attr_device_info = device_info
+        note = spec.entry.get("note")
+        if note:
+            self._attr_extra_state_attributes = {"note": note}
+
+    async def async_press(self) -> None:
+        try:
+            await self._runtime.async_send_command(self._spec.key)
+        except Exception as err:
+            raise HomeAssistantError(str(err)) from err
