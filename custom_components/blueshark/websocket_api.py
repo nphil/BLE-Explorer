@@ -196,7 +196,7 @@ class EnumeratedService:
 
 
 def shape_enumerate(
-    services: list[EnumeratedService], preferred_hints: list[str] | None = None
+    services: list[EnumeratedService], preferred_hints: list[str] | None = None, codec_id: str | None = None
 ) -> dict[str, Any]:
     """`blueshark/enumerate` response: the full GATT table plus one suggested channel.
 
@@ -204,6 +204,8 @@ def shape_enumerate(
     its hint fragments (e.g. "fff1") appears in a discovered channel's write or
     notify uuid, else simply the first write+notify channel found. `None` when
     the device exposes no channel that both takes writes and can answer.
+    `codec_id` is the matched family's codec, when one matched, so the wizard
+    can preselect it alongside the suggested channel.
     """
 
     gatt = GattDatabase(
@@ -228,7 +230,7 @@ def shape_enumerate(
                 None,
             )
             best = hinted or best
-        suggested = {"service": best.service, "characteristic": best.write, "codec_id": None}
+        suggested = {"service": best.service, "characteristic": best.write, "codec_id": codec_id}
     return {
         "services": [
             {
@@ -251,9 +253,18 @@ def encode_for_wire(codec: Codec, payload: bytes, framed: bool) -> bytes:
 
 
 def send_result(sent: bytes, response: bytes | None, elapsed_ms: int, codec: SweepCodec) -> dict[str, Any]:
-    """`blueshark/send` response shape (also used by the send_raw/probe_opcode services)."""
+    """`blueshark/send` response shape (also used by the send_raw/probe_opcode services).
 
-    v, status = verdict(codec, response)
+    `sent` is the framed bytes actually written to the characteristic; it is decoded back
+    through `codec` to recover the unframed request payload, which lets a codec's `classify`
+    hook (see `CoolLedCodec.classify`) recognise a reply that echoes the request instead of
+    answering with a status byte. If `sent` doesn't decode - e.g. a caller wrote bytes the
+    codec itself can't parse - the request is `None` and `verdict` falls back to its
+    non-echo classification.
+    """
+
+    request = codec.decode(sent)
+    v, status = verdict(codec, response, request)
     return {
         "sent_hex": sent.hex(),
         "response_hex": response.hex() if response is not None else None,
@@ -268,7 +279,7 @@ def sweep_progress_event(
 ) -> dict[str, Any]:
     """One streamed `blueshark/sweep/start` progress event."""
 
-    v, status = verdict(codec, response)
+    v, status = verdict(codec, response, step.payload)
     return {
         "index": index,
         "total": total,
@@ -475,6 +486,7 @@ def async_register_commands(hass: HomeAssistant) -> None:
         address = msg["address"]
         info, matches = _identify_from_cache(address, connectable=True)
         hints = list(matches[0].command_characteristic_hints) if matches else []
+        codec_id = matches[0].codec_id if matches else None
         name = info.name if info is not None and info.name else address
         transport = coordinator.async_get_transport(hass, address, name)
         try:
@@ -492,7 +504,7 @@ def async_register_commands(hass: HomeAssistant) -> None:
             )
             for service in raw_services
         ]
-        connection.send_result(msg["id"], shape_enumerate(services, hints))
+        connection.send_result(msg["id"], shape_enumerate(services, hints, codec_id))
 
     # ---- blueshark/send ----
 

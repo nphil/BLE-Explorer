@@ -36,6 +36,11 @@ class Codec(ABC):
         """Status code of a decoded notification, by default its first byte."""
         return decoded[0] if decoded else None
 
+    def classify(self, request: bytes | None, decoded_response: bytes) -> tuple[str, int | None] | None:
+        """Codec-specific ``(verdict, status)`` override consulted before the status-byte
+        table; ``None`` (the default) defers to it.  See ``sweep.verdict``."""
+        return None
+
 
 class UnknownCodecError(KeyError):
     """Raised for a codec id that is not registered."""

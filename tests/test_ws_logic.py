@@ -227,6 +227,22 @@ class ShapeEnumerateTests(unittest.TestCase):
         result = shape_enumerate(services)
         self.assertIsNone(result["suggested"])
 
+    def test_suggested_channel_carries_the_matched_family_codec_id(self):
+        services = [
+            EnumeratedService(
+                uuid="0000fff0-0000-1000-8000-00805f9b34fb",
+                characteristics=[
+                    EnumeratedCharacteristic(
+                        uuid="0000fff1-0000-1000-8000-00805f9b34fb", handle=10, properties=["write", "notify"]
+                    )
+                ],
+            )
+        ]
+        matched = shape_enumerate(services, preferred_hints=["fff1"], codec_id="coolled")
+        self.assertEqual(matched["suggested"]["codec_id"], "coolled")
+        unmatched = shape_enumerate(services, preferred_hints=["fff1"])
+        self.assertIsNone(unmatched["suggested"]["codec_id"])
+
 
 class SendResultAndWireEncodingTests(unittest.TestCase):
     def test_send_result_accepted_round_trips_a_real_coolled_frame(self):
@@ -246,6 +262,49 @@ class SendResultAndWireEncodingTests(unittest.TestCase):
         self.assertIsNone(result["response_hex"])
         self.assertIsNone(result["status"])
 
+    def test_send_result_recognises_a_real_echo_ack_that_changed_the_device(self):
+        # Real iLedClock over an ESPHome BLE proxy, characteristic fff1: sent payload
+        # 08 FF, the device visibly changed and echoed the opcode plus the same value.
+        codec = get_codec("coolled")
+        sent = bytes.fromhex("010204020608ff03")
+        response = bytes.fromhex("0100020608ff03")
+        result = send_result(sent, response, 30, codec)
+        self.assertEqual(result["verdict"], "accepted")
+        self.assertEqual(result["status"], 0xFF)
+
+    def test_send_result_recognises_a_real_echo_ack_with_no_visible_change(self):
+        # Same device, canary write 08 40: echoed back as 08 FE. Under the old status-byte
+        # reading this 0xFE would misclassify as rejected_other; it is an accepted echo.
+        codec = get_codec("coolled")
+        sent = bytes.fromhex("0102040206084003")
+        response = bytes.fromhex("0100020608fe03")
+        result = send_result(sent, response, 30, codec)
+        self.assertEqual(result["verdict"], "accepted")
+        self.assertEqual(result["status"], 0xFE)
+
+    def test_send_result_non_echoing_reply_still_uses_the_status_byte_table(self):
+        # Reply's first byte (0x05) does not echo the request's opcode (0x08): classify()
+        # declines and the generic status-byte table (0x05 == unknown id) applies.
+        codec = get_codec("coolled")
+        sent = codec.encode(bytes([0x08, 0xFF]))
+        response = codec.encode(bytes([0x05]))
+        result = send_result(sent, response, 10, codec)
+        self.assertEqual(result["verdict"], "rejected_unknown_id")
+        self.assertEqual(result["status"], 5)
+
+    def test_send_result_raw_codec_is_unaffected_by_request_threading(self):
+        result = send_result(b"\x08\xff", b"\x00", 5, get_codec("raw"))
+        self.assertEqual(result["verdict"], "accepted")
+        self.assertEqual(result["status"], 0)
+
+    def test_send_result_prefix_suffix_codec_is_unaffected_by_request_threading(self):
+        codec = get_codec("prefix_suffix", {"header_hex": "aa", "trailer_hex": "55"})
+        sent = codec.encode(bytes([0x08, 0xFF]))
+        response = codec.encode(bytes([0x00]))
+        result = send_result(sent, response, 5, codec)
+        self.assertEqual(result["verdict"], "accepted")
+        self.assertEqual(result["status"], 0)
+
     def test_encode_for_wire_applies_codec_framing_unless_already_framed(self):
         codec = get_codec("coolled")
         payload = bytes([0x08, 0xFF])
@@ -264,6 +323,16 @@ class SweepEventShapeTests(unittest.TestCase):
         self.assertEqual(event["status"], 0)
         self.assertEqual(event["opcode"], 8)
         self.assertEqual(event["elapsed_ms"], 55)
+
+    def test_progress_event_recognises_a_real_echo_ack(self):
+        # Same real device/opcode vector as send_result's echo tests, threaded through
+        # `step.payload` instead of a decoded `sent`.
+        codec = get_codec("coolled")
+        step = SweepStep(kind="probe", opcode=0x08, payload=bytes([0x08, 0xFF]))
+        response = bytes.fromhex("0100020608ff03")
+        event = sweep_progress_event(3, 10, step, response, 40, codec)
+        self.assertEqual(event["verdict"], "accepted")
+        self.assertEqual(event["status"], 0xFF)
 
     def test_progress_event_marks_a_probe_step_with_no_response(self):
         codec = get_codec("raw")

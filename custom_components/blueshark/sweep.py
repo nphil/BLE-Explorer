@@ -23,6 +23,11 @@ class SweepCodec(Protocol):
     def status(self, decoded: bytes) -> int | None:
         """Return the status byte of a decoded reply, or ``None`` if it has none."""
 
+    def classify(self, request: bytes | None, decoded_response: bytes) -> tuple[str, int | None] | None:
+        """Codec-specific ``(verdict, status)`` override, or ``None`` to defer to the generic
+        status-byte table below.  ``request`` is the unframed payload that was written, when
+        known.  Optional: codecs (and test doubles) that have no opinion simply omit it."""
+
 
 @dataclass(frozen=True)
 class SweepStep:
@@ -75,14 +80,27 @@ def plan_sweep(
     return steps
 
 
-def verdict(codec: SweepCodec, response: bytes | None) -> tuple[str, int | None]:
-    """Classify one reply as ``(verdict, status)``."""
+def verdict(
+    codec: SweepCodec, response: bytes | None, request: bytes | None = None
+) -> tuple[str, int | None]:
+    """Classify one reply as ``(verdict, status)``.
+
+    ``request`` is the unframed payload that was written, when known.  It lets a codec's
+    ``classify`` hook recognise a reply that echoes the request rather than answering with a
+    status byte (see ``CoolLedCodec.classify``); codecs with no such hook, or that decline to
+    classify a given reply, fall through to the generic status-byte table below unchanged.
+    """
 
     if response is None:
         return "no_response", None
     decoded = codec.decode(response)
     if decoded is None:
         return "undecodable", None
+    classify = getattr(codec, "classify", None)
+    if classify is not None:
+        override = classify(request, decoded)
+        if override is not None:
+            return override
     status = codec.status(decoded)
     if status is None:
         return "undecodable", None
@@ -112,7 +130,7 @@ def interpret_sweep(
     aborted = False
     message: str | None = None
     for step, response in step_results:
-        v, s = verdict(codec, response)
+        v, s = verdict(codec, response, step.payload)
         if step.kind == "canary" and v == "no_response":
             aborted = True
             message = f"device stopped responding after step {probe_count}"

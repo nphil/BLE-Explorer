@@ -30,6 +30,16 @@ class PlainCodec(CanaryCodec):
     canary = None
 
 
+class EchoingCodec(CanaryCodec):
+    """Codec double whose device echoes the request's opcode plus a resulting value,
+    like the real CoolLED/iLedClock hardware, instead of a status byte."""
+
+    def classify(self, request, decoded_response):
+        if not request or not decoded_response or decoded_response[0] != request[0]:
+            return None
+        return "accepted", decoded_response[1] if len(decoded_response) > 1 else None
+
+
 ACCEPTED = b"\xaa\x00"
 UNKNOWN_ID = b"\xaa\x05"
 REJECTED = b"\xaa\x03"
@@ -111,6 +121,24 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(verdict(self.codec, REJECTED), ("rejected_other", 3))
         self.assertEqual(verdict(self.codec, b"\xaa\xff"), ("rejected_other", 255))
 
+    def test_codec_without_classify_hook_is_unaffected_by_a_request(self):
+        # CanaryCodec exposes no classify hook at all; passing a request must not change
+        # the generic status-byte classification one bit.
+        self.assertEqual(verdict(self.codec, ACCEPTED, request=b"\xaa\x00"), ("accepted", 0))
+
+    def test_classify_hook_overrides_the_status_byte_table_on_an_echo(self):
+        codec = EchoingCodec()
+        # Request opcode 0x08 is echoed back with 0xfe as the resulting value, not status
+        # byte 0xfe from the table.
+        self.assertEqual(verdict(codec, b"\xaa\x08\xfe", request=b"\x08\x40"), ("accepted", 0xFE))
+
+    def test_classify_hook_defers_to_the_status_byte_table_when_it_declines(self):
+        codec = EchoingCodec()
+        # Reply's first byte (0x00) does not echo the request's opcode (0x08), so
+        # classify() returns None and the status-byte table (0x00 == accepted) applies.
+        self.assertEqual(verdict(codec, b"\xaa\x00", request=b"\x08\x40"), ("accepted", 0))
+        self.assertEqual(verdict(codec, b"\xaa\x05", request=b"\x08\x40"), ("rejected_unknown_id", 5))
+
 
 class InterpretSweepTests(unittest.TestCase):
     def setUp(self):
@@ -165,6 +193,16 @@ class InterpretSweepTests(unittest.TestCase):
         self.assertEqual(outcome["results"][4]["verdict"], "rejected_other")
         self.assertEqual(outcome["results"][5]["verdict"], "rejected_unknown_id")
         self.assertEqual(outcome["results"][6]["verdict"], "undecodable")
+
+    def test_probe_step_whose_response_echoes_its_opcode_counts_as_accepted(self):
+        # Real hardware behaviour: the reply's first byte (0x09) echoes the request's
+        # opcode rather than answering with a status byte, so this must land in
+        # `accepted`, not be misread as `rejected_other` via CanaryCodec's status table.
+        codec = EchoingCodec()
+        outcome = interpret_sweep(codec, [(probe(9), b"\xaa\x09\x05")])
+        self.assertEqual(outcome["accepted"], [9])
+        self.assertEqual(outcome["results"][0]["verdict"], "accepted")
+        self.assertEqual(outcome["results"][0]["status"], 5)
 
     def test_silent_canary_aborts_and_drops_later_steps(self):
         outcome = interpret_sweep(
