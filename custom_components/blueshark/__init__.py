@@ -75,7 +75,12 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
     from homeassistant.components import frontend
 
-    await hass.http.async_register_static_path(PANEL_STATIC_URL, str(_PANEL_DIR), cache_headers=False)
+    # HA 2024.7+ takes a list of StaticPathConfig; the singular helper was removed.
+    from homeassistant.components.http import StaticPathConfig
+
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(PANEL_STATIC_URL, str(_PANEL_DIR), False)]
+    )
     frontend.async_register_built_in_panel(
         hass,
         component_name="custom",
